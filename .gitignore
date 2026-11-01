@@ -1,0 +1,11 @@
+# secrets
+.env
+*.env
+# python
+.venv/
+__pycache__/
+*.pyc
+# generated / large
+data/processed/
+endpoint_service/audit/*.jsonl
+evaluation/results/*.log
