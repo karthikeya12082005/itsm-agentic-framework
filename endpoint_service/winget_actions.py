@@ -6,10 +6,11 @@ COMMON = ["--exact", "--silent", "--accept-package-agreements", "--accept-source
 
 
 def is_installed(package_id: str) -> bool:
-    r = subprocess.run(["winget", "list", "--exact", "--id", package_id, "--accept-source-agreements",
-                        "--disable-interactivity"], capture_output=True, text=True, timeout=120)
+    """Only machine-wide installs count: they are the ones visible to employee01."""
+    r = subprocess.run(["winget", "list", "--exact", "--id", package_id, "--scope", "machine",
+                        "--accept-source-agreements", "--disable-interactivity"],
+                       capture_output=True, text=True, timeout=120)
     return r.returncode == 0 and package_id.lower() in r.stdout.lower()
-
 
 def install(package_id: str) -> dict:
     if is_installed(package_id):

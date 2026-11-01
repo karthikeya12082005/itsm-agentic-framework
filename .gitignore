@@ -9,3 +9,4 @@ __pycache__/
 data/processed/
 endpoint_service/audit/*.jsonl
 evaluation/results/*.log
+data/tickets.db
