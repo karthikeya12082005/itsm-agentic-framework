@@ -252,10 +252,13 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       ESCALATED to "Service Desk"; INC0010021 Postman -> On Hold, approval requested, approver manager01 named.
       Live bug fixed: same-second work notes came back out of order -> one numbered "Agent trace" note per run
       + per-ticket note sequence "[#n agent]". First ticket of a run takes ~45 s (slow Gemini call) -> 2.1.)
-- [ ] 1.5 Approvals recorded in ServiceNow: on ALLOW_WITH_APPROVAL set incident approval=requested + On Hold +
+- [x] 1.5 Approvals recorded in ServiceNow: on ALLOW_WITH_APPROVAL set incident approval=requested + On Hold +
       work note naming who may approve (LINE_MANAGER -> caller's manager, SECURITY_TEAM -> IT Security member);
       `cli approve <INC> --by <user> [--reject]` checks the user against ServiceNow (wrong person -> refused,
       noted), sets approval approved/rejected with a work note, resumes the graph.
+      (Nov 24 2026, live: INC0010021 Postman (LINE_MANAGER): security01 REFUSED, employee01 REFUSED (self),
+      manager01 --reject ACCEPTED -> Canceled, approval Rejected. INC0010015 GitHub (SECURITY_TEAM): manager01
+      REFUSED, still On Hold/Requested. CLI exit code 2 on refusal. Approve path with execution -> 1.6.)
 - [ ] 1.6 End-to-end test: create access incidents for employee01 (CLI `new` writes them to ServiceNow) ->
       ChatGPT DENY, Gemini ALLOW, GitHub approval refused for manager01 and accepted for security01 -> RESOLVED;
       endpoint changes verified; notes, comments, states and approval field visible in the PDI.
