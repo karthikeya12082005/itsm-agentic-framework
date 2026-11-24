@@ -1,8 +1,21 @@
-psycopg[binary]
-python-dotenv
-pandas
-fastapi
-uvicorn
-requests
-sentence-transformers
-langgraph
+# Python 3.12. Versions verified together on Windows 11 (Nov 2026): pip install -r requirements.txt
+# Only direct dependencies are pinned; pip resolves the rest (torch comes with sentence-transformers).
+
+# database / knowledge store
+psycopg[binary]==3.3.6
+pandas==3.1.0
+numpy==2.5.4
+sentence-transformers==6.2.0
+huggingface_hub==2.4.0
+
+# agents
+langgraph==1.2.19
+pydantic==2.14.2
+
+# endpoint enforcement service (FastAPI, runs as Administrator)
+fastapi==0.162.0
+uvicorn==0.54.0
+
+# common
+requests==2.34.2
+python-dotenv==1.2.4

@@ -177,7 +177,12 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       `src/integrations/check_sn_auth.py` (missing). Test: `python -m src.integrations.check_sn_auth` = 200.
       (Verified twice: HTTP 200, roles incl. itil, approval_admin, snc_basic_auth_api_access. See "ServiceNow
       authentication facts" below — Basic-auth restriction and API password setting do not work.)
-- [ ] 0.8 `.gitignore` contains .env, data/tickets.db, checkpoint DBs, logs, audit jsonl. `pip install -r requirements.txt` clean.
+- [x] 0.8 `.gitignore` contains .env, data/tickets.db, checkpoint DBs, logs, audit jsonl. `pip install -r requirements.txt` clean.
+      (requirements.txt pins the direct deps verified together; fresh-venv `pip install --dry-run` resolves cleanly,
+      `pip check` OK. .gitignore: *.db/*.sqlite*/WAL files, data/checkpoints/, logs/, *.log, endpoint_service/audit/.
+      New deps (Phase 2: langgraph-checkpoint-sqlite etc.) must be added here with a pinned version.)
+
+**Phase 0 COMPLETE (Nov 24 2026)** — branch phase-0-setup merged into main.
 
 ## Phase 1 — ServiceNow integration (REQUIRED)
 - [ ] 1.1 `src/integrations/servicenow_client.py`: auth, retries, timeouts, pagination; get/update records,

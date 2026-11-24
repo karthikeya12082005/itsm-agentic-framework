@@ -109,3 +109,8 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
   sys.scripts.do did not run). Final fix: ai.agent (Internal Integration User; itil, approval_admin,
   snc_basic_auth_api_access) + password set by hand with Set Password -> Generate -> pasted into .env.
   check_sn_auth: HTTP 200 twice. Admin password not rotated yet (user's choice) -> reset at the end of 1.2.
+- 0.8 requirements.txt pinned (psycopg 3.3.6, pandas 3.1.0, numpy 2.5.4, sentence-transformers 6.2.0,
+  huggingface_hub 2.4.0, langgraph 1.2.19, pydantic 2.14.2, fastapi 0.162.0, uvicorn 0.54.0, requests 2.34.2,
+  python-dotenv 1.2.4); clean install + pip check; fresh-venv dry-run resolves. .gitignore extended for checkpoint
+  DBs, logs and the audit folder (0 tracked files affected).
+- **Phase 0 complete.** Next: Phase 1 (ServiceNow client 1.1, setup 1.2 incl. admin password reset, ...).
