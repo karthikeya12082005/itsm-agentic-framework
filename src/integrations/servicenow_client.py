@@ -342,13 +342,27 @@ class ServiceNowClient:
         return out
 
     # ------------------------------------------------------------------------------------ approvals
+    # Lean design: approvals are given through the agent CLI and recorded ON THE INCIDENT (approval field +
+    # work note). sysapproval_approver rows cannot be created for incidents by a non-admin: platform field
+    # ACLs only allow approver/sysapproval on new rows for change_request / catalog tasks, and otherwise
+    # blank them silently (HTTP 201 with empty fields - seen live on dev219979).
+    def set_task_approval(self, table: str, sys_id: str, state: str, work_note: str | None = None) -> dict:
+        """Set the task's own `approval` field (requested / approved / rejected / ...) with an optional note."""
+        if state not in APPROVAL_STATES:
+            raise ValueError(f"approval state must be one of {APPROVAL_STATES}")
+        data = {"approval": state}
+        if work_note:
+            data["work_notes"] = work_note
+        return self.update(table, sys_id, data, fields="sys_id,number,approval")
+
     def get_approvals(self, task_sys_id: str, state: str | None = None) -> list[dict]:
         q = f"sysapproval={task_sys_id}" + (f"^state={state}" if state else "")
         return self.query("sysapproval_approver", q,
                           "sys_id,state,approver,approver.user_name,comments,sys_updated_on", order_by="sys_created_on")
 
     def create_approval(self, task_sys_id: str, approver_sys_id: str, source_table: str = "sc_req_item") -> dict:
-        """Ask `approver` to approve the task (state 'requested')."""
+        """Ask `approver` to approve the task (state 'requested'). Works for catalog/change tasks only;
+        for incidents use set_task_approval (see the note above)."""
         return self.create("sysapproval_approver", {
             "sysapproval": task_sys_id, "document_id": task_sys_id, "source_table": source_table,
             "approver": approver_sys_id, "state": "requested"}, fields="sys_id,state,approver")

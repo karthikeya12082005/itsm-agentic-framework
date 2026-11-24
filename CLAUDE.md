@@ -20,12 +20,19 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 
 ## REQUIRED scope for the final system (user's decision)
 - **ServiceNow is REQUIRED, not optional.** ServiceNow PDI (**dev219979**, Brazil release; replaced the old
-  dev195312 in Nov 2026 — the new instance is EMPTY: users, group and catalog items must be created again) is the
-  system of record for tickets: employees raise requests/incidents in ServiceNow; the agents read them via the
-  REST Table API, write work notes, set state, and handle approvals (sysapproval_approver). The local SQLite desk
-  (src/access/store.py) is only a fallback/test double behind the same interface. Integration user ai.agent
-  (role: Internal Integration User + itil + approval_admin; 24-char alphanumeric password; single-quoted in .env).
-  Catalog items to create: "Request website or AI tool access", "Request software installation".
+  dev195312 in Nov 2026 — the new instance started EMPTY) is the system of record for tickets. The agents read
+  tickets via the REST Table API, write work notes, set state, and record approvals on the incident.
+  The local SQLite desk (src/access/store.py) is only a fallback/test double behind the same interface.
+  Integration user ai.agent (Internal Integration User + itil + approval_admin + snc_basic_auth_api_access).
+  **LEAN DESIGN (user's decision, Nov 24 2026):** the **Incident table for everything** — access requests are
+  incidents with category `access` (built-in "Access & Password"), free text, caller employee01, assignment group
+  "AI Service Desk"; Objective 3 incidents use the normal categories. NO catalog items. Human users (employee01,
+  manager01, security01) are **records without logins** (no passwords). **Approvals are given through the CLI**
+  (`approve <INC> --by <user>`, approver checked in code against ServiceNow: LINE_MANAGER = caller's manager,
+  SECURITY_TEAM = member of group "IT Security") and **recorded on the incident** by ai.agent: approval field
+  requested -> approved/rejected, state On Hold while waiting, work notes naming approver, group and policy
+  (user's choice; sysapproval_approver rows are impossible on incidents for non-admins, see auth facts).
+  ITIL note for the report: access requests are tagged category=access; a Service Catalog front end is future work.
 - **Agentic AI with LangGraph and MULTIPLE LLMs is REQUIRED.** It is a multi-agent system: each agent is a
   LangGraph node/subgraph with its own role, tools and its own configured LLM. Use agentic concepts explicitly:
   supervisor/orchestrator routing, tool calling, ReAct-style diagnosis loops, shared typed state, checkpointing
@@ -99,8 +106,9 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   check_sn_auth.py (REST login test; `--admin`; detects hibernation), create_ai_agent.py (admin web session
   class `Admin`; creates ai.agent + roles idempotently), servicenow_client.py (1.1: `ServiceNowClient.from_env()`,
   typed errors, retries, ACL-safe paging, work notes/comments/state by name/journal/RITM variables/approvals;
-  `python -m src.integrations.servicenow_client smoke [--write]`). To write: servicenow_setup.py (1.2: users,
-  group, roles, the two catalog items, `--test-order`).
+  `python -m src.integrations.servicenow_client smoke [--write]`), servicenow_setup.py (1.2, lean design:
+  user records, groups IT Security + AI Service Desk, APPROVER_GROUPS map; setup needs admin, `--test` runs
+  as ai.agent only).
 - `tests/` — stdlib unittest (no pytest): `python -m unittest discover -s tests -t . -v`.
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
@@ -151,7 +159,14 @@ Chrome must be restarted for employee01 to pick up new policies.
 - sc_req_item has no own state choices; it inherits task.state: -5 Pending, 1 Open, 2 Work in Progress,
   3 Closed Complete, 4 Closed Incomplete, 7 Closed Skipped. Incident: 1 New, 2 In Progress, 3 On Hold,
   6 Resolved, 7 Closed, 8 Canceled (verified against sys_choice via admin session).
-- Smoke tests left two canceled test incidents (INC0010001, INC0010002, "[smoke test]") — harmless.
+- Smoke/setup tests leave canceled test incidents ("[smoke test]" / "[setup test]", INC0010001-5) — harmless.
+- sysapproval_approver on INCIDENTS cannot be created by non-admins: field ACLs allow approver/sysapproval on
+  new rows only for change_request/std_change_proposal and catalog tasks; otherwise the insert returns 201
+  with those fields silently BLANK (orphan rows; 4 were created in testing and deleted). -> approvals are
+  recorded in incident.approval (+ work notes), which ai.agent can write.
+- The Brazil PDI already has incident.category `access` = "Access & Password" (sequence 1). The first setup run
+  overwrote its label; it was restored from sys_update_version. Setup never modifies existing platform choices.
+- Reference fields accept a display value on insert (user "security01" resolved), but queries need sys_ids.
 
 ## Known issues
 - VS Code installs fail while VS Code is running (installer cancels silently).
@@ -202,20 +217,26 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       live `smoke --write` OK on dev219979. Live run found 2 bugs the mocks missed: ACL short pages ended paging
       early; get_journal via sys_journal_field returned [] silently -> both fixed. get_ritm_variables is
       verified live only in 1.2 (no catalog variables exist yet).)
-- [ ] 1.2 Run servicenow_setup.py: users (employee01, manager01, ai.agent), group "IT Security"/SECURITY_TEAM and
-      line manager mapping, catalog items "Request website or AI tool access" and "Request software installation".
-      Reuse `create_ai_agent.Admin` (admin web session). Human users' passwords: set by hand (Set Password).
-      LAST STEP: user resets the PDI admin password (old one is exposed in a chat screenshot) and Claude clears
-      SERVICENOW_ADMIN_PASSWORD from .env; re-check `check_sn_auth --admin` fails / `check_sn_auth` still 200.
+- [ ] 1.2 Run servicenow_setup.py (lean design, admin web session `create_ai_agent.Admin`, idempotent):
+      user records without logins: manager01 (LINE_MANAGER), employee01 (title DEVELOPER, manager manager01),
+      security01; groups "IT Security" (= SECURITY_TEAM, member security01) and "AI Service Desk" (member
+      ai.agent); incident category `access` (exists: "Access & Password"; create-only). `--test` (as ai.agent,
+      not admin): create an access incident for employee01, read caller role/manager, approval requested ->
+      approved on the incident, approver check, work notes, cancel. LAST STEP: user resets the PDI admin password (old one exposed) ->
+      old password's web login must fail; Claude clears SERVICENOW_ADMIN_PASSWORD; `check_sn_auth` still 200.
 - [ ] 1.3 Ticket source abstraction: `TicketSource` interface with `ServiceNowSource` (default) and `LocalSource`
       (SQLite, tests only). Agents never call ServiceNow directly.
-- [ ] 1.4 Poller/worker: picks up new RITMs (and later INCs), maps variables -> agent state, runs the graph,
-      writes every agent step as a work note, final message as a customer-visible comment, sets state
-      (Closed Complete / Closed Incomplete / Work in Progress / Pending approval).
-- [ ] 1.5 Approvals in ServiceNow: create sysapproval_approver for the correct approver (role from policy),
-      wait, resume the graph on approve/reject. Only the approver of the required group/role may approve.
-- [ ] 1.6 End-to-end test: order each catalog item as employee01 in the PDI UI -> ChatGPT DENY, Gemini ALLOW,
-      GitHub approval by the SECURITY_TEAM member -> RESOLVED; endpoint changes verified; notes visible in PDI.
+- [ ] 1.4 Poller/worker: picks up new incidents (category access, assignment group AI Service Desk, state New),
+      maps caller (role = title, manager) + free text -> agent state, runs the graph, writes every agent step as
+      a work note, final message as a customer-visible comment, sets incident state (In Progress / On Hold =
+      awaiting approval / Resolved / Canceled for DENY; close notes say why).
+- [ ] 1.5 Approvals recorded in ServiceNow: on ALLOW_WITH_APPROVAL set incident approval=requested + On Hold +
+      work note naming who may approve (LINE_MANAGER -> caller's manager, SECURITY_TEAM -> IT Security member);
+      `cli approve <INC> --by <user> [--reject]` checks the user against ServiceNow (wrong person -> refused,
+      noted), sets approval approved/rejected with a work note, resumes the graph.
+- [ ] 1.6 End-to-end test: create access incidents for employee01 (CLI `new` writes them to ServiceNow) ->
+      ChatGPT DENY, Gemini ALLOW, GitHub approval refused for manager01 and accepted for security01 -> RESOLVED;
+      endpoint changes verified; notes, comments, states and approval field visible in the PDI.
 
 ## Phase 2 — Multi-agent LangGraph with multiple LLMs (REQUIRED)
 - [ ] 2.1 `src/common/llm_router.py`: providers Gemini / Groq / Ollama behind one interface; per-agent model map
@@ -237,7 +258,8 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 ## Phase 3 — Objective 2 hardening and evaluation
 - [ ] 3.1 Pre-check running process before software install (Code.exe, chrome.exe, Postman.exe...): clear user
       message "close X and resubmit" instead of escalation; test with VS Code open.
-- [ ] 3.2 Approver role enforcement (also in ServiceNow).
+- [ ] 3.2 Approver role enforcement (done in 1.5 for the CLI; extend to other approver roles, e.g.
+      IT_SERVICE_OWNER / CHANGE_ADVISORY_BOARD for Objective 3, with groups created by servicenow_setup.py).
 - [ ] 3.3 Revocation / time-limited access (duration variable) with automatic rollback when expired.
 - [ ] 3.4 Unknown target -> ESCALATE_FOR_REVIEW; test with a domain not in the catalogue.
 - [ ] 3.6 Rollback correctness: winget uninstall must use `--scope machine` (as install does); domain rollback

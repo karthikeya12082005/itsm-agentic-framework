@@ -278,6 +278,15 @@ class Approvals(unittest.TestCase):
         c.set_approval("ap1", "rejected", "not allowed")
         self.assertEqual(s.calls[0]["json"], {"state": "rejected", "comments": "not allowed"})
 
+    def test_set_task_approval_on_incident(self):
+        c, s, _ = client(ok({"approval": "approved"}))
+        with self.assertRaises(ValueError):
+            c.set_task_approval("incident", "i1", "ok")
+        c.set_task_approval("incident", "i1", "approved", "approved by security01 (SECURITY_TEAM)")
+        self.assertEqual((s.calls[0]["method"], s.calls[0]["url"]), ("PATCH", f"{BASE}/api/now/table/incident/i1"))
+        self.assertEqual(s.calls[0]["json"], {"approval": "approved",
+                                              "work_notes": "approved by security01 (SECURITY_TEAM)"})
+
     def test_group_members(self):
         c, s, _ = client(ok([{"user": "u1", "user.user_name": "sec01"}]))
         self.assertEqual(c.group_members("IT Security"), [{"sys_id": "u1", "user_name": "sec01"}])
