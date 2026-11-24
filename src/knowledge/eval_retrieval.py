@@ -75,6 +75,9 @@ def main():
     results, n = evaluate(retriever, tests, args.category)
     md = report(results, n, args.category)
     print("\n" + md)
+    if args.limit:                     # partial runs are smoke tests: never overwrite the full saved results
+        print(f"\n--limit {args.limit}: results NOT saved (only full runs update {RESULTS_DIR.name}/)")
+        return
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"retrieval_eval{'_category' if args.category else ''}.md"
     out.write_text(md + "\n", encoding="utf-8")
