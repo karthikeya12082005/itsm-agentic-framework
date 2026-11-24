@@ -97,8 +97,11 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   --no-retrieval).
 - `src/integrations/` — (the earlier scripts were never committed and were lost; rewritten for dev219979)
   check_sn_auth.py (REST login test; `--admin`; detects hibernation), create_ai_agent.py (admin web session
-  class `Admin`; creates ai.agent + roles idempotently). To write: servicenow_client.py (1.1),
-  servicenow_setup.py (1.2: users, group, roles, the two catalog items, `--test-order`).
+  class `Admin`; creates ai.agent + roles idempotently), servicenow_client.py (1.1: `ServiceNowClient.from_env()`,
+  typed errors, retries, ACL-safe paging, work notes/comments/state by name/journal/RITM variables/approvals;
+  `python -m src.integrations.servicenow_client smoke [--write]`). To write: servicenow_setup.py (1.2: users,
+  group, roles, the two catalog items, `--test-order`).
+- `tests/` — stdlib unittest (no pytest): `python -m unittest discover -s tests -t . -v`.
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
 ## Catalogue (src/access/catalog.py)
@@ -141,6 +144,14 @@ Chrome must be restarted for employee01 to pick up new policies.
   NO effect; background script via sys.scripts.do did not execute when posted. Passwords are set by hand in the UI.
 - Login failures are logged: sysevent `login.failed` and syslog "Basic authentication failed for user: X".
 - Instance hibernation shows up as a non-JSON (HTML) answer; `check_sn_auth` reports it.
+- Read ACLs filter rows AFTER a page is fetched: a page of 20 can return 19 while more follow. Paging must
+  advance by the requested size and stop on X-Total-Count (pre-ACL total), never on a short page.
+- ai.agent cannot read `sys_choice` (403, admin-only) nor `sys_journal_field` (rows exist, 0 readable).
+  Journal entries are read from the record's own work_notes/comments field as display value and parsed.
+- sc_req_item has no own state choices; it inherits task.state: -5 Pending, 1 Open, 2 Work in Progress,
+  3 Closed Complete, 4 Closed Incomplete, 7 Closed Skipped. Incident: 1 New, 2 In Progress, 3 On Hold,
+  6 Resolved, 7 Closed, 8 Canceled (verified against sys_choice via admin session).
+- Smoke tests left two canceled test incidents (INC0010001, INC0010002, "[smoke test]") — harmless.
 
 ## Known issues
 - VS Code installs fail while VS Code is running (installer cancels silently).
@@ -185,8 +196,12 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 **Phase 0 COMPLETE (Nov 24 2026)** — branch phase-0-setup merged into main.
 
 ## Phase 1 — ServiceNow integration (REQUIRED)
-- [ ] 1.1 `src/integrations/servicenow_client.py`: auth, retries, timeouts, pagination; get/update records,
+- [x] 1.1 `src/integrations/servicenow_client.py`: auth, retries, timeouts, pagination; get/update records,
       add work note, add comment, set state, query approvals. Unit test with a mocked session + live smoke test.
+      (Nov 24 2026: 33 unit tests OK (tests/test_servicenow_client.py, fake session returning real Responses);
+      live `smoke --write` OK on dev219979. Live run found 2 bugs the mocks missed: ACL short pages ended paging
+      early; get_journal via sys_journal_field returned [] silently -> both fixed. get_ritm_variables is
+      verified live only in 1.2 (no catalog variables exist yet).)
 - [ ] 1.2 Run servicenow_setup.py: users (employee01, manager01, ai.agent), group "IT Security"/SECURITY_TEAM and
       line manager mapping, catalog items "Request website or AI tool access" and "Request software installation".
       Reuse `create_ai_agent.Admin` (admin web session). Human users' passwords: set by hand (Set Password).
