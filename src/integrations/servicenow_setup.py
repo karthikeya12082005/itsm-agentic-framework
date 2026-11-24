@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from src.access.catalog import APPROVER_GROUPS
 from src.common import config  # noqa: F401  (loads .env)
 from src.integrations.servicenow_client import ServiceNowClient, ServiceNowError, _env
 
@@ -38,9 +39,10 @@ USERS = [
 USER_DEFAULTS = {"active": "true", "locked_out": "false", "internal_integration_user": "false",
                  "web_service_access_only": "false"}
 
-# policy approver_role -> ServiceNow group (LINE_MANAGER is resolved from the caller's manager field instead)
-APPROVER_GROUPS = {"SECURITY_TEAM": "IT Security"}
+# policy approver_role -> ServiceNow group: APPROVER_GROUPS in src/access/catalog.py (single source of truth;
+# LINE_MANAGER is resolved from the caller's manager field instead)
 AGENT_GROUP = "AI Service Desk"
+ESCALATION_GROUP = "Service Desk"   # built-in human group on the PDI; escalated tickets are reassigned to it
 GROUPS = [
     {"name": "IT Security", "description": "Approvers for policy approver_role SECURITY_TEAM "
                                            "(approvals given via the agent CLI, recorded by ai.agent)",

@@ -8,8 +8,8 @@ import unittest
 import requests
 
 from src.integrations.servicenow_client import (
-    ServiceNowAuthError, ServiceNowClient, ServiceNowError, ServiceNowForbidden, ServiceNowHibernating,
-    ServiceNowNotFound)
+    ServiceNowAuthError, ServiceNowClient, ServiceNowError, ServiceNowFieldDropped, ServiceNowForbidden,
+    ServiceNowHibernating, ServiceNowNotFound)
 
 BASE = "https://dev000000.service-now.com"
 
@@ -123,6 +123,22 @@ class TableApi(unittest.TestCase):
         self.assertEqual([x["method"] for x in s.calls], ["POST", "PATCH", "DELETE"])
         self.assertEqual(s.calls[1]["url"], f"{BASE}/api/now/table/incident/n1")
         self.assertEqual(s.calls[1]["json"], {"urgency": "2"})
+
+    def test_silently_dropped_field_raises(self):
+        # live behaviour: HTTP 200 but close_code comes back blank when the value is not in the choice list
+        c, s, _ = client(ok({"sys_id": "i1", "state": "6", "close_code": "", "close_notes": "x"}))
+        with self.assertRaises(ServiceNowFieldDropped) as cm:
+            c.update("incident", "i1", {"state": "6", "close_code": "Solution provided", "close_notes": "x",
+                                        "work_notes": "journal fields always read back empty"}, fields="sys_id")
+        self.assertIn("close_code", str(cm.exception))
+        self.assertNotIn("work_notes", str(cm.exception))
+        # the fields we write are requested back so the guard can see them (journal fields excluded)
+        self.assertEqual(s.calls[0]["params"]["sysparm_fields"], "sys_id,state,close_code,close_notes")
+
+    def test_dropped_reference_on_create_raises(self):
+        c, _, _ = client(resp(201, {"result": {"sys_id": "a1", "approver": "", "sysapproval": "", "state": "requested"}}))
+        with self.assertRaises(ServiceNowFieldDropped):
+            c.create_approval("inc1", "u1", source_table="incident")
 
     def test_get_by_number_not_found(self):
         c, _, _ = client(ok([]))

@@ -56,6 +56,16 @@ INCIDENT_STATES = {
     "canceled": "8",
 }
 STATE_MAPS = {"sc_req_item": RITM_STATES, "incident": INCIDENT_STATES}
+# incident.close_code ("Resolution code") is a STRICT choice list on the Brazil PDI (read via /api/now/ui/meta):
+# any other value is silently blanked, and a data policy makes code + close_notes mandatory for Resolved.
+# Note the EN DASH (U+2013) inside the values.
+CLOSE_CODES = {
+    "fixed": "Resolved – Permanent Fix Applied",
+    "no_action": "Resolved – Fixed Without Action",
+    "workaround": "Workaround provided",
+    "duplicate": "Duplicate",
+}
+JOURNAL_FIELDS = {"work_notes", "comments"}   # write-only in responses (always read back as '')
 # sysapproval_approver.state values (strings, not numbers)
 APPROVAL_STATES = ("requested", "approved", "rejected", "cancelled", "not requested", "not_required")
 
@@ -86,6 +96,11 @@ class ServiceNowNotFound(ServiceNowError):
 
 class ServiceNowHibernating(ServiceNowError):
     """The PDI answered with an HTML page instead of JSON (hibernating or waking up)."""
+
+
+class ServiceNowFieldDropped(ServiceNowError):
+    """The call succeeded but ServiceNow silently blanked field(s) we sent (field ACL or strict choice list).
+    Seen live: sysapproval_approver.approver/sysapproval on incidents, incident.close_code with a wrong value."""
 
 
 # ---------------------------------------------------------------------------------------------- helpers
@@ -278,13 +293,32 @@ class ServiceNowClient:
         return int(r.headers.get("X-Total-Count", len(r.json()["result"])))
 
     def create(self, table: str, data: dict, fields=None) -> dict:
-        r = self.request("POST", f"/api/now/table/{table}", params=self._params(fields, False), json=data)
-        return r.json()["result"]
+        r = self.request("POST", f"/api/now/table/{table}", params=self._params(self._with_sent(fields, data),
+                                                                                False), json=data)
+        return self._guard(table, data, r.json()["result"])
 
     def update(self, table: str, sys_id: str, data: dict, fields=None) -> dict:
-        r = self.request("PATCH", f"/api/now/table/{table}/{sys_id}", params=self._params(fields, False),
-                         json=data)
-        return r.json()["result"]
+        r = self.request("PATCH", f"/api/now/table/{table}/{sys_id}",
+                         params=self._params(self._with_sent(fields, data), False), json=data)
+        return self._guard(table, data, r.json()["result"])
+
+    @staticmethod
+    def _with_sent(fields, data: dict):
+        """Ask ServiceNow to return every field we write, so _guard can see if one was dropped."""
+        if not fields:
+            return None  # all fields come back anyway
+        have = fields.split(",") if isinstance(fields, str) else list(fields)
+        return have + [k for k in data if k not in have and k not in JOURNAL_FIELDS]
+
+    @staticmethod
+    def _guard(table: str, data: dict, result: dict) -> dict:
+        dropped = [k for k, v in data.items()
+                   if k not in JOURNAL_FIELDS and v not in ("", None) and result.get(k, None) == ""]
+        if dropped:
+            raise ServiceNowFieldDropped(f"{table}: ServiceNow accepted the call but blanked {dropped} "
+                                         "(field ACL or value not in a strict choice list)", 200,
+                                         f"sys_id={result.get('sys_id', '?')}")
+        return result
 
     def delete(self, table: str, sys_id: str) -> None:
         self.request("DELETE", f"/api/now/table/{table}/{sys_id}")

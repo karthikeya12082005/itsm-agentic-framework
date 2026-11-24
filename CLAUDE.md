@@ -98,11 +98,14 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   /actions/allowlist_domain, /actions/revoke_domain, /actions/install_software, /actions/rollback),
   audit at endpoint_service/audit/actions.jsonl, test_endpoint.py (allow / rollback <action_id> / negative).
   scripts/: create_employee01.ps1, apply_employee_policies.ps1, reset_employee_policies.ps1.
-- `src/access/` — catalog.py (TARGETS -> policy, ALTERNATIVES, SOFTWARE_KEYWORDS, EMPLOYEES), store.py (SQLite
-  data/tickets.db, RITM9000001+), endpoint_client.py, agents.py (understanding, retrieval, decide, policy_risk,
-  request_approval, execution, verification, communication), graph.py (LangGraph StateGraph; START routes new /
-  resume-approved / resume-rejected), cli.py (new, process [--all], approve [--reject] [--by], show, list, demo,
-  --no-retrieval).
+- `src/access/` — catalog.py (TARGETS -> policy, ALTERNATIVES, SOFTWARE_KEYWORDS, EMPLOYEES (local only),
+  APPROVER_GROUPS, LOCAL_GROUP_MEMBERS), store.py (SQLite data/tickets.db, RITM9000001+), endpoint_client.py,
+  agents.py (understanding [role from ticket], retrieval, decide, policy_risk, request_approval, execution,
+  verification, communication), graph.py (LangGraph StateGraph; START routes new / resume-approved /
+  resume-rejected), ticket_source.py (TicketSource interface + ServiceNowSource (default, incident table; agent
+  context in data/agent_state.db) + LocalSource; `python -m src.access.ticket_source selftest`), worker.py
+  (process_ticket, approve_ticket with approver check, run_poller), cli.py (`--source servicenow|local`; new,
+  worker [--once] [--interval], process [--all], approve --by <user> [--reject], show, list, demo, --no-retrieval).
 - `src/integrations/` — (the earlier scripts were never committed and were lost; rewritten for dev219979)
   check_sn_auth.py (REST login test; `--admin`; detects hibernation), create_ai_agent.py (admin web session
   class `Admin`; creates ai.agent + roles idempotently), servicenow_client.py (1.1: `ServiceNowClient.from_env()`,
@@ -126,7 +129,9 @@ python -m uvicorn endpoint_service.server:app --host 127.0.0.1 --port 8765
 # Normal terminal
 python -m src.common.check_db
 python -m src.knowledge.eval_retrieval [--category]
-python -m src.access.cli demo | new "<text>" | process --all | approve <RITM> [--reject] | show <RITM> | list
+python -m src.access.cli new "<text>" | worker [--once] | process --all | approve <INC> --by <user> [--reject] | show <INC> | list | demo
+python -m src.access.cli --source local demo      # offline SQLite desk
+python -m unittest discover -s tests -t .         # all unit tests (offline)
 # Restore restrictions (Admin, employee01 signed out)
 powershell -ExecutionPolicy Bypass -File .\endpoint_service\scripts\reset_employee_policies.ps1
 powershell -ExecutionPolicy Bypass -File .\endpoint_service\scripts\apply_employee_policies.ps1
@@ -168,6 +173,12 @@ Chrome must be restarted for employee01 to pick up new policies.
 - The Brazil PDI already has incident.category `access` = "Access & Password" (sequence 1). The first setup run
   overwrote its label; it was restored from sys_update_version. Setup never modifies existing platform choices.
 - Reference fields accept a display value on insert (user "security01" resolved), but queries need sys_ids.
+- Resolving an incident: a data policy makes close_code ("Resolution code") + close_notes mandatory, and
+  close_code is a STRICT choice list (values contain an EN DASH, e.g. "Resolved – Permanent Fix Applied"; list
+  via GET /api/now/ui/meta/incident). Any other value is silently blanked -> CLOSE_CODES in servicenow_client.
+  Canceled (8) needs no code. Escalations go to the built-in group "Service Desk".
+- Because of these silent drops, ServiceNowClient.create/update request back every field they write and raise
+  ServiceNowFieldDropped if one came back blank (journal fields excluded).
 
 ## Known issues
 - VS Code installs fail while VS Code is running (installer cancels silently).
@@ -228,8 +239,11 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       (Nov 24 2026: setup created 3 users + 2 groups, re-run all "unchanged"; admin password reset by user, old
       one rejected by web login; .env value cleared (17 keys, order intact); check_sn_auth 200; `--test` as
       ai.agent all OK (INC0010006). Design change on the way: approvals on the incident's approval field.)
-- [ ] 1.3 Ticket source abstraction: `TicketSource` interface with `ServiceNowSource` (default) and `LocalSource`
+- [x] 1.3 Ticket source abstraction: `TicketSource` interface with `ServiceNowSource` (default) and `LocalSource`
       (SQLite, tests only). Agents never call ServiceNow directly.
+      (Nov 24 2026: src/access/ticket_source.py; neutral statuses mapped to incident state/approval/close code;
+      65 unit tests OK (tests/test_ticket_source.py, tests/test_access_worker.py); live `selftest` OK
+      (INC0010008 approval -> RESOLVED, INC0010009 ESCALATED, INC0010010 CLOSED_REJECTED).)
 - [ ] 1.4 Poller/worker: picks up new incidents (category access, assignment group AI Service Desk, state New),
       maps caller (role = title, manager) + free text -> agent state, runs the graph, writes every agent step as
       a work note, final message as a customer-visible comment, sets incident state (In Progress / On Hold =
