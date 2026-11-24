@@ -74,7 +74,8 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   committed template `.env.example`. Set so far (Nov 24 2026): DATABASE_URL (rotated), ENDPOINT_URL,
   ENDPOINT_TOKEN (rotated, 40 chars), SERVICENOW_INSTANCE (dev219979), SERVICENOW_USER, GEMINI_API_KEY,
   GEMINI_MODEL_LITE, GROQ_API_KEY, OLLAMA_BASE_URL, HF_TOKEN (read), SERVICENOW_PASSWORD (ai.agent),
-  SERVICENOW_ADMIN_PASSWORD (temporary, until 1.2). Still empty: LLM_* agent map (2.1). Claude checks .env only by key names / lengths / masked shape — never values.
+  SERVICENOW_ADMIN_PASSWORD (CLEARED after 1.2; admin password reset Nov 24 2026 — put it back only temporarily
+  to re-run servicenow_setup.py, then clear again). Still empty: LLM_* agent map (2.1). Claude checks .env only by key names / lengths / masked shape — never values.
   Common paste mistakes seen: whole `NAME='…'` line pasted inside the quotes; file not saved (Ctrl+S);
   whole file overwritten instead of one line edited.
 - Ollama: D:\Ollama (ollama.exe not on PATH in old terminals), models in D:\Ollama\models (user env OLLAMA_MODELS),
@@ -217,13 +218,16 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       live `smoke --write` OK on dev219979. Live run found 2 bugs the mocks missed: ACL short pages ended paging
       early; get_journal via sys_journal_field returned [] silently -> both fixed. get_ritm_variables is
       verified live only in 1.2 (no catalog variables exist yet).)
-- [ ] 1.2 Run servicenow_setup.py (lean design, admin web session `create_ai_agent.Admin`, idempotent):
+- [x] 1.2 Run servicenow_setup.py (lean design, admin web session `create_ai_agent.Admin`, idempotent):
       user records without logins: manager01 (LINE_MANAGER), employee01 (title DEVELOPER, manager manager01),
       security01; groups "IT Security" (= SECURITY_TEAM, member security01) and "AI Service Desk" (member
       ai.agent); incident category `access` (exists: "Access & Password"; create-only). `--test` (as ai.agent,
       not admin): create an access incident for employee01, read caller role/manager, approval requested ->
       approved on the incident, approver check, work notes, cancel. LAST STEP: user resets the PDI admin password (old one exposed) ->
       old password's web login must fail; Claude clears SERVICENOW_ADMIN_PASSWORD; `check_sn_auth` still 200.
+      (Nov 24 2026: setup created 3 users + 2 groups, re-run all "unchanged"; admin password reset by user, old
+      one rejected by web login; .env value cleared (17 keys, order intact); check_sn_auth 200; `--test` as
+      ai.agent all OK (INC0010006). Design change on the way: approvals on the incident's approval field.)
 - [ ] 1.3 Ticket source abstraction: `TicketSource` interface with `ServiceNowSource` (default) and `LocalSource`
       (SQLite, tests only). Agents never call ServiceNow directly.
 - [ ] 1.4 Poller/worker: picks up new incidents (category access, assignment group AI Service Desk, state New),
