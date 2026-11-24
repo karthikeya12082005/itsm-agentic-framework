@@ -146,6 +146,8 @@ Retrieval, 301 test tickets (SOP Hit@1/Hit@3/MRR@10; Policy Hit@1/Hit@3/MRR@10; 
 Access demo: ChatGPT DENY -> CLOSED_REJECTED; Gemini ALLOW -> RESOLVED (~1 s); GitHub AWAITING_APPROVAL ->
 approved -> RESOLVED; VS Code install FAILED x2 -> ESCALATED (installer aborts when VS Code is running).
 Chrome must be restarted for employee01 to pick up new policies.
+Phase 1 on ServiceNow (Nov 24 2026): same decisions on PDI incidents (INC0010022-24), worker ~4.5 s per ticket
+after the first (first ~20-45 s: Gemini latency); approver checks refuse wrong person / self-approval.
 
 ## ServiceNow authentication facts (PDI dev219979, Brazil, verified Nov 24 2026)
 - Basic-auth restriction ENFORCED since 2026-11-12 (`glide.authenticate.basic_auth.restriction.enforce=true`,
@@ -182,7 +184,10 @@ Chrome must be restarted for employee01 to pick up new policies.
 
 ## Known issues
 - VS Code installs fail while VS Code is running (installer cancels silently).
-- Approver identity is not checked (manager01 approved a SECURITY_TEAM item).
+- (fixed in 1.5) Approver identity is now checked against ServiceNow; wrong approver / self-approval refused.
+- Gemini extraction is slow or 503 at times (first ticket of a run 20-45 s; rule-based fallback works) -> 2.1.
+- A save_result failure after acknowledge leaves the ticket In Progress in AI Service Desk (not re-polled);
+  visible in `cli list` — add a stuck-ticket sweep with the checkpointer (2.8).
 - k-NN confidence is low for real AI tool names (dataset uses fictional names) — decisions still correct.
 
 ---------------------------------------------------------------------------------------------------------------
@@ -259,9 +264,17 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       (Nov 24 2026, live: INC0010021 Postman (LINE_MANAGER): security01 REFUSED, employee01 REFUSED (self),
       manager01 --reject ACCEPTED -> Canceled, approval Rejected. INC0010015 GitHub (SECURITY_TEAM): manager01
       REFUSED, still On Hold/Requested. CLI exit code 2 on refusal. Approve path with execution -> 1.6.)
-- [ ] 1.6 End-to-end test: create access incidents for employee01 (CLI `new` writes them to ServiceNow) ->
+- [x] 1.6 End-to-end test: create access incidents for employee01 (CLI `new` writes them to ServiceNow) ->
       ChatGPT DENY, Gemini ALLOW, GitHub approval refused for manager01 and accepted for security01 -> RESOLVED;
       endpoint changes verified; notes, comments, states and approval field visible in the PDI.
+      (Nov 24 2026, endpoint service running as Admin: INC0010022 ChatGPT -> Canceled, no endpoint action;
+      INC0010023 Gemini -> allowlisted, verified, Resolved (close code "Resolved – Permanent Fix Applied");
+      INC0010024 GitHub -> On Hold -> manager01 REFUSED -> security01 approved -> allowlisted, verified,
+      Resolved, approval Approved. Independent check: endpoint /status allowlist = [gemini, github], chatgpt
+      still blocked; audit entries carry INC number + AUTH id + rollback spec. Both grants rolled back via
+      /actions/rollback -> allowlist [] again, 10 blocked, DownloadRestrictions 3.)
+
+**Phase 1 COMPLETE (Nov 24 2026)** — branch phase-1-servicenow merged into main.
 
 ## Phase 2 — Multi-agent LangGraph with multiple LLMs (REQUIRED)
 - [ ] 2.1 `src/common/llm_router.py`: providers Gemini / Groq / Ollama behind one interface; per-agent model map
@@ -290,6 +303,16 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 - [ ] 3.6 Rollback correctness: winget uninstall must use `--scope machine` (as install does); domain rollback
       must restore the recorded "before" allowlist (not revoke a grant that existed before the ticket).
 - [ ] 3.7 Endpoint client timeout (1500 s) must not block the poller: run installs asynchronously or per-ticket.
+- [ ] 3.8 Extend the access catalogue beyond the 15 demo targets (user's request, Nov 24 2026). Objective 2 uses
+      7 of 60 policies (POL-0017/18/19/25/27/28/30). Data-only additions (TARGETS + MANAGED_DOMAINS /
+      APPROVED_PACKAGES): POL-0020 prohibited software DENY (e.g. qBittorrent, uTorrent); POL-0023 enterprise
+      apps ALLOW (Zoom, Slack, Teams, Notepad++, 7-Zip); POL-0026 website blocked by filter AWA SECURITY_TEAM
+      (stackoverflow.com, docs.python.org...); POL-0029 AI dev platforms AWA AI_GOVERNANCE_BOARD
+      (huggingface.co, kaggle.com, colab.research.google.com -> new SN group via servicenow_setup); more DENY
+      sites under POL-0027/0030 (dropbox personal, deepseek...). New endpoint action types (bigger): POL-0033/34
+      unlock / reset the local account, POL-0037 group membership (in ServiceNow itself), POL-0038 local admin
+      rights (likely DENY or ESCALATE on a restricted laptop). Unknown targets keep ESCALATE_FOR_REVIEW.
+      Objective-3 policies (NETWORK/APPLICATION/INFRASTRUCTURE/DATABASE) belong to Phase 4.
 - [ ] 3.5 `evaluation/eval_access.py`: batch of labelled requests (incl. dataset access tickets) -> decision exact
       match, automation rate, escalation rate, approval rate, MTTA, MTTR, verification pass rate; save tables.
 
