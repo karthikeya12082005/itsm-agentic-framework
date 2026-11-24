@@ -1,6 +1,8 @@
-# secrets
+# secrets (the template .env.example IS committed)
 .env
 *.env
+.env.*
+!.env.example
 # python
 .venv/
 __pycache__/
