@@ -40,7 +40,6 @@ def _normalise_target(raw):
             return pkg
     return m.group(1) if m else None          # a domain we do not manage -> handled as unknown
 
-
 def extract_request(text):
     """LLM extraction with a rule-based fallback. Returns (target, justification, method)."""
     prompt = ("You read IT service requests from employees. Return JSON with keys "
@@ -54,14 +53,14 @@ def extract_request(text):
         return target, str(out.get("justification") or ""), "llm"
     return _normalise_target(text), "", "rule-based"
 
-
 def understanding(state, retriever=None):
     t = state["ticket"]
     target, justification, method = extract_request(t["description"])
-    employee = EMPLOYEES.get(t["requester"], {"role": "EMPLOYEE", "department": "UNKNOWN"})
+    # role comes from the ticket source (ServiceNow: caller's sys_user.title); local directory as fallback
+    role = t.get("requester_role") or EMPLOYEES.get(t["requester"], {}).get("role", "EMPLOYEE")
     known = target in TARGETS
     u = {"target": target, "known_target": known, "justification": justification, "extraction": method,
-         "requester_role": employee["role"], "impact": "Low", "urgency": "Medium", "priority": "Low"}
+         "requester_role": role, "impact": "Low", "urgency": "Medium", "priority": "Low"}
     if known:
         info, pol = TARGETS[target], POLICIES[TARGETS[target]["policy_id"]]
         u.update(kind=info["kind"], label=info["label"], policy_id=info["policy_id"], sop_id=pol["sop_id"],
@@ -78,7 +77,6 @@ def understanding(state, retriever=None):
             + (f"; k-NN confidence {u['confidence']}" if "confidence" in u else ""))
     return {"understanding": u, "notes": [("Understanding Agent", note)]}
 
-
 # ---------------------------------------------------------------- Retrieval Agent
 def retrieval(state, retriever=None):
     u = state["understanding"]
@@ -94,7 +92,6 @@ def retrieval(state, retriever=None):
     else:
         note = f"linked {u['sop_id']} / {u['policy_id']} (retrieval skipped)"
     return {"evidence": ev, "notes": [("Retrieval Agent", note)]}
-
 
 # ---------------------------------------------------------------- Policy & Risk Agent (rule engine, eq. 3.6/3.7)
 def decide(policy, role, target_known=True):
@@ -124,12 +121,16 @@ def policy_risk(state):
     d["authorization_id"] = f"AUTH-{state['ticket']['number']}-{d['decision']}"
     return {"policy": d, "notes": [("Policy & Risk Agent", f"{d['decision']}: {d['reason']}")]}
 
+APPROVER_TEXT = {"LINE_MANAGER": "your line manager", "SECURITY_TEAM": "the IT Security team"}
+
 
 def request_approval(state):
-    p = state["policy"]
-    return {"final_state": "AWAITING_APPROVAL", "approval_status": "PENDING",
+    p, u = state["policy"], state["understanding"]
+    who = APPROVER_TEXT.get(p["approver_role"], p["approver_role"])
+    msg = (f"Your request for {u.get('label') or u.get('target')} is allowed by policy {u.get('policy_id')} but "
+           f"needs approval by {who}. Nothing has been changed yet; we will update you after the decision.")
+    return {"final_state": "AWAITING_APPROVAL", "approval_status": "PENDING", "user_message": msg,
             "notes": [("Policy & Risk Agent", f"approval requested from {p['approver_role']}; nothing executed yet")]}
-
 
 # ---------------------------------------------------------------- Execution Agent (no LLM)
 def execution(state):
@@ -145,8 +146,6 @@ def execution(state):
     except endpoint_client.EndpointError as e:
         return {"attempts": attempts, "execution": {"status": "FAILED", "error": str(e)},
                 "notes": [("Execution Agent", f"attempt {attempts} failed: {e}")]}
-
-
 # ---------------------------------------------------------------- Verification Agent (predicate check, eq. 3.8)
 def verification(state):
     u = state["understanding"]
@@ -157,8 +156,6 @@ def verification(state):
     note = (f"check '{u['target']} is {'allowed' if u['kind'] == 'domain' else 'installed'}' -> "
             f"{'PASSED' if verified else 'FAILED'}")
     return {"verified": verified, "notes": [("Verification Agent", note)]}
-
-
 # ---------------------------------------------------------------- Communication Agent
 def communication(state):
     u, p = state["understanding"], state.get("policy", {})

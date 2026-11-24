@@ -114,3 +114,35 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
   python-dotenv 1.2.4); clean install + pip check; fresh-venv dry-run resolves. .gitignore extended for checkpoint
   DBs, logs and the audit folder (0 tracked files affected).
 - **Phase 0 complete.** Next: Phase 1 (ServiceNow client 1.1, setup 1.2 incl. admin password reset, ...).
+
+## 10. Phase 1 — ServiceNow integration (Nov 24 2026, branch phase-1-servicenow)
+- Start check: check_db OK (PG 18.7), check_sn_auth 200, check_llms Gemini/Groq/Ollama OK (Gemini 11.7 s).
+- 1.1 `servicenow_client.py` (Basic auth as ai.agent, retries/backoff/Retry-After, POST retried only when no
+  record can exist, typed errors incl. hibernation). Live smoke found what mocks missed: read ACLs filter rows
+  AFTER a page is fetched (19 of 20) -> paging stops on X-Total-Count; sys_journal_field (0 of 3 readable) and
+  sys_choice (403) are hidden from ai.agent -> journal read from the record's own field; RITM states come from
+  task.state.
+- **Scope decision (user): LEAN design.** Asked whether catalog items / human logins are required: no. Incident
+  table for everything (access requests = category `access`, built-in "Access & Password"), user records
+  without logins (employee01 DEVELOPER/manager01, manager01, security01), groups "IT Security" (=SECURITY_TEAM)
+  and "AI Service Desk" (ai.agent), approvals given in the CLI and recorded in ServiceNow.
+- 1.2 setup mistakes and fixes: the first run overwrote the label of the existing `access` choice (restored
+  from sys_update_version; choices are now create-only); group members were posted by name (worked by display
+  value) but looked up by sys_id -> duplicate insert 403 on re-run (fixed). sysapproval_approver cannot be
+  created on incidents by non-admins: field ACLs blank approver/sysapproval (HTTP 201, empty fields; 4 orphan
+  rows deleted). User chose to record approvals in incident.approval + work notes. Admin password reset by the
+  user; old one rejected; SERVICENOW_ADMIN_PASSWORD cleared from .env; setup --test passes as ai.agent only.
+- 1.3 `ticket_source.py` (TicketSource; ServiceNowSource default, LocalSource for tests) + `worker.py` + CLI
+  `--source`. Resolving needs a data-policy close_code from a STRICT choice list with EN DASHES ("Resolved –
+  Permanent Fix Applied"; list via /api/now/ui/meta/incident); wrong values are silently blanked -> client now
+  raises ServiceNowFieldDropped whenever a written field comes back blank. Escalations go to "Service Desk".
+  Agent context for resume kept in data/agent_state.db (checkpointer replaces it in 2.8).
+- 1.4 worker live: work notes written within one second came back out of order (Policy before Understanding)
+  -> one numbered "Agent trace" note per run + per-ticket note sequence "[#n agent]".
+- 1.5 approvals: wrong group, wrong manager and self-approval refused (noted on the ticket, CLI exit 2).
+- 1.6 end to end with the endpoint service: ChatGPT Canceled; Gemini allowlisted + verified + Resolved;
+  GitHub refused for manager01, approved by security01, allowlisted + verified + Resolved. Endpoint state and
+  audit log checked independently; both grants rolled back afterwards (restrictions restored).
+- 68 offline unit tests (stdlib unittest). Test incidents INC0010001-24 remain on the PDI (labelled or closed).
+- User asked whether other services/apps must be supported: yes -> TODO 3.8 (catalogue extension per policy).
+- **Phase 1 complete.** Next: Phase 2 (LLM router with per-agent models, supervisor, critic, checkpointer).

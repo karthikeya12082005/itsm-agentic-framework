@@ -38,7 +38,16 @@ SOFTWARE_KEYWORDS = {
     "postman": "Postman.Postman",
 }
 
-# Employee directory (mirrors the Windows account; later read from ServiceNow sys_user)
+# Employee directory for the LOCAL ticket source only (tests/offline). With ServiceNow (default) the role is the
+# caller's sys_user.title and the manager is sys_user.manager - created by src/integrations/servicenow_setup.py.
 EMPLOYEES = {
     "employee01": {"name": "Employee 01", "role": "DEVELOPER", "department": "ENGINEERING", "manager": "manager01"},
+    "manager01": {"name": "Manager 01", "role": "LINE_MANAGER", "department": "ENGINEERING", "manager": ""},
+    "security01": {"name": "Security 01", "role": "SECURITY_ANALYST", "department": "IT_SECURITY", "manager": ""},
 }
+
+# Who may approve: policy approver_role -> ServiceNow group. LINE_MANAGER is not a group: it is the caller's
+# manager. A role missing here (e.g. CHANGE_ADVISORY_BOARD) has no approvers -> every approval is refused.
+APPROVER_GROUPS = {"SECURITY_TEAM": "IT Security"}
+# Group members for the LOCAL source (mirrors servicenow_setup.GROUPS)
+LOCAL_GROUP_MEMBERS = {"IT Security": {"security01"}}
