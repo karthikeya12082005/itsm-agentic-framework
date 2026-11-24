@@ -365,6 +365,20 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 **Phase 2 COMPLETE (Nov 24 2026)** — branch phase-2-multi-llm merged into main.
 
 ## Phase 3 — Objective 2 hardening and evaluation
+User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
+- 3.8 scope = **Level 1 (data-only)**: POL-0020 DENY (qBittorrent, uTorrent), POL-0023 ALLOW (Zoom, Slack, Teams,
+  Notepad++, 7-Zip), POL-0026 AWA SECURITY_TEAM (stackoverflow.com, docs.python.org), POL-0029 AWA
+  AI_GOVERNANCE_BOARD (huggingface.co, kaggle.com, colab.research.google.com), more DENY sites (dropbox, deepseek).
+- 3.2: create **all 5 approver groups** with one user record each (no login) via servicenow_setup.py:
+  IT Service Owners/serviceowner01 (IT_SERVICE_OWNER), Change Advisory Board/cab01, AI Governance Board/aigov01,
+  Application Owners/appowner01, Data Owners/dataowner01. Needs SERVICENOW_ADMIN_PASSWORD temporarily (guide the
+  user), clear it afterwards. Update catalog.APPROVER_GROUPS + LOCAL_GROUP_MEMBERS (single source of truth).
+- Planned design: endpoint service v2 in ONE restart (Admin terminal): /precheck/software (running processes,
+  3.1), async install jobs + GET /jobs/{id} (3.7, graph waits via interrupt, worker resumes), uninstall with
+  --scope machine + domain rollback restores the domain's recorded "before" state (3.6), optional expires_at on
+  grants, worker revokes due grants via /actions/rollback and notes the ticket (3.3). New neutral status
+  WAITING_FOR_USER (On Hold, awaiting caller) for "close VS Code" with automatic retry when the app is closed.
+  3.4 is already covered (unit test + live INC0010031/36) - tick after a final check.
 - [ ] 3.1 Pre-check running process before software install (Code.exe, chrome.exe, Postman.exe...): clear user
       message "close X and resubmit" instead of escalation; test with VS Code open.
 - [ ] 3.2 Approver role enforcement (done in 1.5 for the CLI; extend to other approver roles, e.g.
