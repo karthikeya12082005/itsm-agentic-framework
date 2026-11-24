@@ -42,7 +42,8 @@ class FakeProviders:
         return mock.patch.dict(R.CALLERS, {p: self.caller(p) for p in ("gemini", "groq", "ollama")})
 
 
-class RouterTest(unittest.TestCase):
+class EnvCase(unittest.TestCase):
+    """Fake keys + agent map, no log file, clean cooldowns (no test methods here)."""
     def setUp(self):
         self.env = mock.patch.dict(os.environ, ENV)
         self.env.start()
@@ -62,6 +63,9 @@ class RouterTest(unittest.TestCase):
             res = R.complete_json(agent, "find the target", Target, fallback=fallback, **kw)
         return res, fake
 
+
+
+class RouterTest(EnvCase):
     # ---------------------------------------------------------------- chain construction
     def test_parse_spec(self):
         self.assertEqual(R.parse_spec("groq:openai/gpt-oss-20b"), ("groq", "openai/gpt-oss-20b"))
@@ -172,6 +176,27 @@ class RouterTest(unittest.TestCase):
                                       fallback=lambda: {"target": "rules.com"})
         self.assertEqual(res.method, "rule-based")
         self.assertEqual(len(fake.calls), 1)               # secondary not tried: budget (8 s * 2.5) is spent
+
+
+class WarmupTest(EnvCase):
+    def test_warmup_cools_down_failing_models_before_first_ticket(self):
+        fake = FakeProviders({"groq:small": ['{"ok": true}'],
+                              "gemini:gemini-flash": [R.ProviderError("transient", "HTTP 503")]})
+        with fake.patch():
+            status = R.warmup(["understanding", "critic"])
+        self.assertTrue(status["groq:small"].startswith("ok"))
+        self.assertIn("DOWN", status["gemini:gemini-flash"])
+        self.assertGreater(R.cooling("gemini:gemini-flash"), 0)
+        self.assertEqual(R.cooling("groq:small"), 0)
+
+    def test_cooldown_grows_on_repeated_failures_and_resets_on_success(self):
+        R._cool("groq:small", 100)
+        first = R.cooling("groq:small")
+        R._cool("groq:small", 100)
+        self.assertGreater(R.cooling("groq:small"), first + 50)          # 100 s, then 200 s
+        R._healthy("groq:small")
+        R._cool("groq:small", 100)
+        self.assertLessEqual(R.cooling("groq:small"), 100.5)
 
 
 class HttpErrorTest(unittest.TestCase):

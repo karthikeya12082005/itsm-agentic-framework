@@ -101,14 +101,23 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   /actions/allowlist_domain, /actions/revoke_domain, /actions/install_software, /actions/rollback),
   audit at endpoint_service/audit/actions.jsonl, test_endpoint.py (allow / rollback <action_id> / negative).
   scripts/: create_employee01.ps1, apply_employee_policies.ps1, reset_employee_policies.ps1.
-- `src/access/` — catalog.py (TARGETS -> policy, ALTERNATIVES, SOFTWARE_KEYWORDS, EMPLOYEES (local only),
-  APPROVER_GROUPS, LOCAL_GROUP_MEMBERS), store.py (SQLite data/tickets.db, RITM9000001+), endpoint_client.py,
-  agents.py (understanding [role from ticket], retrieval, decide, policy_risk, request_approval, execution,
-  verification, communication), graph.py (LangGraph StateGraph; START routes new / resume-approved /
-  resume-rejected), ticket_source.py (TicketSource interface + ServiceNowSource (default, incident table; agent
-  context in data/agent_state.db) + LocalSource; `python -m src.access.ticket_source selftest`), worker.py
-  (process_ticket, approve_ticket with approver check, run_poller), cli.py (`--source servicenow|local`; new,
-  worker [--once] [--interval], process [--all], approve --by <user> [--reject], show, list, demo, --no-retrieval).
+- `src/orchestrator/` (Phase 2) — state.py (AgentState TypedDict: ticket, flow, guardrails, understanding,
+  evidence, policy, critic, approval, execution, verification, final_state, route[], trace[]), graph.py
+  (supervisor hub + `route()`; build_graph(retriever, checkpointer, rewrite_query, incident_node)),
+  guardrails.py (check_input), trace.py (step/timed/format_step), checkpoint.py (sqlite_saver ->
+  data/checkpoints/agents.sqlite, memory_saver for tests, values/summary/delete per thread).
+- `src/access/` — catalog.py (TARGETS -> policy, TARGET_ALIASES, ALTERNATIVES, SOFTWARE_KEYWORDS, CATALOGUE_NOTE +
+  ENFORCEMENT (critic context), EMPLOYEES (local only), APPROVER_GROUPS, LOCAL_GROUP_MEMBERS), store.py (SQLite
+  data/tickets.db, RITM9000001+), endpoint_client.py (execute/verify/status/rollback; `python -m
+  src.access.endpoint_client status | rollback <action_id> <ticket>`), schemas.py (pydantic outputs of each LLM
+  agent), agents.py (rule_target/normalise_target/grounded, understanding (LLM + grounding), retrieval (query
+  rewrite), decide/decide_for/policy_risk, request_approval, await_approval (interrupt), execution, verification,
+  communicate), critic.py, communication.py (outcome + compose + message_ok), graph.py (re-export of
+  orchestrator.graph), ticket_source.py (TicketSource + ServiceNowSource (default; context read from the
+  checkpoint via attach_checkpoints; note seq from the journal; fetch_stuck) + LocalSource; `selftest`),
+  worker.py (process_ticket, approve_ticket (resume via Command), sweep_stuck, run_poller), cli.py
+  (`--source`, `--rules-only`, `--llm-single p:m`, `-v`; new, worker, process, approve, sweep, show, trace, list,
+  demo; `--no-retrieval`, `--no-rewrite`). Worker start: embedding model warm-up + LLM warm-up (llm_router.warmup).
 - `src/integrations/` — (the earlier scripts were never committed and were lost; rewritten for dev219979)
   check_sn_auth.py (REST login test; `--admin`; detects hibernation), create_ai_agent.py (admin web session
   class `Admin`; creates ai.agent + roles idempotently), servicenow_client.py (1.1: `ServiceNowClient.from_env()`,
@@ -132,8 +141,12 @@ python -m uvicorn endpoint_service.server:app --host 127.0.0.1 --port 8765
 # Normal terminal
 python -m src.common.check_db
 python -m src.knowledge.eval_retrieval [--category]
-python -m src.access.cli new "<text>" | worker [--once] | process --all | approve <INC> --by <user> [--reject] | show <INC> | list | demo
+python -m src.access.cli new "<text>" | worker [--once] | process --all | approve <INC> --by <user> [--reject] | show <INC> | trace <INC> | sweep | list | demo
 python -m src.access.cli --source local demo      # offline SQLite desk
+python -m src.access.cli --rules-only ...         # no LLM; --llm-single groq:openai/gpt-oss-20b = one model for all agents
+python -m src.common.check_llms --agents          # per-agent model chain check
+python -m src.access.endpoint_client status       # endpoint allowlist/blocklist; rollback <action_id> <ticket>
+python scripts/check_staged_secrets.py            # before every commit
 python -m unittest discover -s tests -t .         # all unit tests (offline)
 # Restore restrictions (Admin, employee01 signed out)
 powershell -ExecutionPolicy Bypass -File .\endpoint_service\scripts\reset_employee_policies.ps1
@@ -151,6 +164,11 @@ approved -> RESOLVED; VS Code install FAILED x2 -> ESCALATED (installer aborts w
 Chrome must be restarted for employee01 to pick up new policies.
 Phase 1 on ServiceNow (Nov 24 2026): same decisions on PDI incidents (INC0010022-24), worker ~4.5 s per ticket
 after the first (first ~20-45 s: Gemini latency); approver checks refuse wrong person / self-approval.
+Phase 2 on ServiceNow (Nov 24 2026, multi-LLM, retrieval on): INC0010033-38 ChatGPT DENY 7.7 s (first ticket;
+was 29 s before the embedding warm-up), Gemini RESOLVED 7.1 s, GitHub AWAITING 7.3 s -> approved in another
+process -> RESOLVED, notion.so ESCALATED 4.9 s, prompt injection ESCALATED 4.2 s, "remove pypi.org" ESCALATED.
+Root cause of the old slow first ticket: ~20 s lazy load of the embedding model inside the first k-NN lookup
+(+ Gemini timeouts) -> model loaded at worker start (17 s) + LLM warm-up puts down models in cooldown.
 
 ## ServiceNow authentication facts (PDI dev219979, Brazil, verified Nov 24 2026)
 - Basic-auth restriction ENFORCED since 2026-11-12 (`glide.authenticate.basic_auth.restriction.enforce=true`,
@@ -188,9 +206,15 @@ after the first (first ~20-45 s: Gemini latency); approver checks refuse wrong p
 ## Known issues
 - VS Code installs fail while VS Code is running (installer cancels silently).
 - (fixed in 1.5) Approver identity is now checked against ServiceNow; wrong approver / self-approval refused.
-- Gemini extraction is slow or 503 at times (first ticket of a run 20-45 s; rule-based fallback works) -> 2.1.
-- A save_result failure after acknowledge leaves the ticket In Progress in AI Service Desk (not re-polled);
-  visible in `cli list` — add a stuck-ticket sweep with the checkpointer (2.8).
+- (fixed in 2.1/2.8) slow first ticket; stuck In Progress tickets (sweep).
+- Gemini 3.5-flash / flash-lite are often 503 "high demand" or take 10-30 s (Nov 2026). The router's cooldown and
+  warm-up handle it; the critic then runs on groq gpt-oss-120b.
+- Groq free tier rate-limits gpt-oss-120b (HTTP 429 after ~4 critic calls within a minute, ~1.2k tokens each).
+  Batch evaluation (3.5 / 5.1) must pace calls or accept fallbacks; the router logs every fallback.
+- Phase-1 tickets (INC0010001-24) have no checkpoint: `list`/`show` show decision/target as None for them.
+  data/agent_state.db is unused since 2.8 (gitignored; can be deleted by the user).
+- Test incidents INC0010025-40 (selftest, live runs, sweep test) remain on the PDI, all closed or escalated.
+  INC0010029 (Gemini) was ESCALATED by the LLM critic before the catalogue-note fix (expected then, see 2.6).
 - k-NN confidence is low for real AI tool names (dataset uses fictional names) — decisions still correct.
 
 ---------------------------------------------------------------------------------------------------------------
@@ -295,17 +319,50 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       (`--agents`: per agent chain, direct ping of each model, one router call. Live Nov 24 2026: all 5 agents
       answered by their primary (groq 0.8-1.1 s, gemini lite 2.1 s, gemini flash 1.4 s). Gemini is flaky today:
       3.5-flash and 3.5-flash-lite alternated between 1-3 s answers, 503 "high demand" and an 18.9 s answer.)
-- [ ] 2.3 Supervisor/orchestrator node routing between agents (access-request flow vs incident flow).
-- [ ] 2.4 Understanding Agent uses LLM extraction (schema-validated) with rule-based fallback.
+- [x] 2.3 Supervisor/orchestrator node routing between agents (access-request flow vs incident flow).
+      (src/orchestrator/graph.py: hub-and-spoke, every agent returns to the supervisor; `route()` is a pure
+      deterministic function; flow = access for category access, incident for any other category (Phase-4
+      placeholder hands off to a human). Supervisor also runs input guardrails (length cap, control chars,
+      prompt-injection patterns). 20-case route table test + live runs show route in the checkpoint.)
+- [x] 2.4 Understanding Agent uses LLM extraction (schema-validated) with rule-based fallback.
       Fix rule-based bug: "I need ChatGPT to debug my Python code" -> Python.Python.3.12 (software keyword wins;
       known AI-tool names without a domain are not recognised). Add tests for such sentences.
-- [ ] 2.5 Retrieval Agent: LLM query rewriting (optional flag) before BM25 + dense + RRF.
-- [ ] 2.6 Critic/Reflection Agent with a DIFFERENT model: reviews proposed plan vs SOP/policy; can only block or
+      (catalog.TARGET_ALIASES + scored candidates (request word in the 4 words before, explicit domain); file
+      names like script.py ignored. LLM target must be GROUNDED in the text (else rules); LLM "other" = nothing
+      requested. 12-sentence test. Live INC0010033: extraction=llm, chatgpt.com, DENY.)
+- [x] 2.5 Retrieval Agent: LLM query rewriting (optional flag) before BM25 + dense + RRF.
+      (default on, `--no-rewrite` flag; live INC0010035: query "website_access GitHub clone open-source
+      dependencies", linked SOP-0025 top-1. Effect on Hit@k measured in 5.1.)
+- [x] 2.6 Critic/Reflection Agent with a DIFFERENT model: reviews proposed plan vs SOP/policy; can only block or
       escalate, never override the rule-based decision.
-- [ ] 2.7 Communication Agent uses LLM for user messages and work notes (fallback templates).
-- [ ] 2.8 LangGraph checkpointer (SQLite or Postgres) + `interrupt` for human approval; resume by thread_id = ticket.
-- [ ] 2.9 Trace: every node writes {agent, model, input summary, output, latency} to state and to ServiceNow notes.
-- [ ] 2.10 Tests: graph unit tests with fake LLMs; one run per provider; fallback test with network off.
+      (src/access/critic.py: runs only for ALLOW/AWA plans, before approval is requested; deterministic checks
+      (injection flag, grounding, removal wording, rule reading stricter than LLM reading, plan consistency) +
+      LLM review; verdict = most severe. Live finding: the LLM critic escalated Gemini because POL-0028's SOP
+      action is ADD_GROUP_MEMBERSHIP for the fictional "Orbit Assist" -> catalogue note + action equivalence
+      given as facts; then gemini-3.5-flash and gpt-oss-120b both: 3 valid plans APPROVE, "REMOVE github.com"
+      BLOCK. With the critic LLM rate-limited (Groq 429) the rules alone approved the removal -> REMOVAL_INTENT
+      check added.)
+- [x] 2.7 Communication Agent uses LLM for user messages and work notes (fallback templates).
+      (outcome decided in code; LLM phrases it; checked for false success/refusal claims, target named, approval
+      mentioned -> else template; DENY alternative always appended. Live: one AWAITING text rejected -> template.)
+- [x] 2.8 LangGraph checkpointer (SQLite or Postgres) + `interrupt` for human approval; resume by thread_id = ticket.
+      (data/checkpoints/agents.sqlite (SqliteSaver, WAL), thread_id = "<instance>|<INC>"; await_approval node
+      calls interrupt(); `cli approve` resumes with Command(resume=...) in ANOTHER process (live INC0010035:
+      manager01 refused, security01 -> execute -> verify -> RESOLVED, only the new steps written).
+      data/agent_state.db is no longer used (ServiceNow note sequence now derived from the journal).
+      Lost checkpoint -> deterministic rebuild + pre-approval (role must match). Stuck sweep (`cli sweep`, also
+      every worker poll, default 600 s): no checkpoint -> re-run; paused -> re-save / resume with recorded
+      approval; mid-run -> resume from checkpoint; finished -> re-save. Live: INC0010039 re-run, INC0010040 re-saved.)
+- [x] 2.9 Trace: every node writes {agent, model, input summary, output, latency} to state and to ServiceNow notes.
+      (src/orchestrator/trace.py; one numbered "Agent trace" work note per run, lines
+      "n. [Agent] output | in: ... | provider:model 0.58s (fallback: secondary)"; `cli trace <INC>` table.)
+- [x] 2.10 Tests: graph unit tests with fake LLMs; one run per provider; fallback test with network off.
+      (tests/test_multi_agent.py 30 tests (scripted FakeLLM per model), test_llm_router 19; 118 total OK.
+      One run per provider (--llm-single, local desk, DENY + AWA): groq gpt-oss-20b 8.9 s, gemini 3.5-flash-lite
+      15.3 s, ollama llama3.2:3b 41.3 s for 2 tickets - same decisions. Network off (requests.post raises):
+      all 4 sample decisions unchanged, every step rule-based/deterministic.)
+
+**Phase 2 COMPLETE (Nov 24 2026)** — branch phase-2-multi-llm merged into main.
 
 ## Phase 3 — Objective 2 hardening and evaluation
 - [ ] 3.1 Pre-check running process before software install (Code.exe, chrome.exe, Postman.exe...): clear user

@@ -202,12 +202,24 @@ def agent_chain(agent: str) -> list[str]:
 
 
 _cooldown: dict[str, float] = {}
+_failures: dict[str, int] = {}
 _lock = threading.Lock()
+MAX_COOLDOWN_S = 900
 
 
-def _cool(spec: str, seconds: float) -> None:
+def _cool(spec: str, seconds: float, grow: bool = True) -> None:
+    """Skip `spec` for `seconds`; repeated transient failures double the wait (120, 240, 480, max 900 s)."""
     with _lock:
+        n = _failures.get(spec, 0) + 1
+        _failures[spec] = n
+        if grow:
+            seconds = min(seconds * 2 ** (n - 1), MAX_COOLDOWN_S)
         _cooldown[spec] = time.monotonic() + seconds
+
+
+def _healthy(spec: str) -> None:
+    with _lock:
+        _failures.pop(spec, None)
 
 
 def cooling(spec: str) -> float:
@@ -219,6 +231,40 @@ def cooling(spec: str) -> float:
 def reset_cooldowns() -> None:
     with _lock:
         _cooldown.clear()
+        _failures.clear()
+
+
+def warmup(agents=None, timeout: float = 6.0) -> dict[str, str]:
+    """Ping every model in the agents' chains in parallel (worker start). A model that is down or overloaded
+    goes into cooldown BEFORE the first ticket, so no ticket waits for its timeout. Returns spec -> status."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    specs = sorted({s for a in (agents or AGENT_VARS) for s in agent_chain(a)})
+
+    def ping(spec):
+        provider, model = parse_spec(spec)
+        if not provider_configured(provider):
+            return spec, "not configured"
+        if cooling(spec):
+            return spec, "cooling"
+        t0 = time.perf_counter()
+        try:
+            text, _ = CALLERS[provider](model, None, 'Reply with the JSON object {"ok": true} only.', timeout, None)
+            parse_json(text)
+        except ProviderError as e:
+            if e.kind == "output":
+                return spec, "answered (not JSON)"
+            _cool(spec, COOLDOWN_S if e.kind == "transient" else CONFIG_COOLDOWN_S, grow=e.kind == "transient")
+            return spec, f"DOWN ({str(e)[:60]}) -> cooldown"
+        except ValueError:
+            return spec, "answered (not JSON)"
+        _healthy(spec)
+        return spec, f"ok {time.perf_counter() - t0:.1f}s"
+
+    if not specs:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(specs))) as pool:
+        return dict(pool.map(ping, specs))
 
 
 # ------------------------------------------------------------------------------------------------ result
@@ -330,7 +376,7 @@ def complete_json(agent: str, prompt: str, schema: type[BaseModel], *, system: s
                 if e.kind == "transient":
                     _cool(spec, min(max(e.retry_after or 0, COOLDOWN_S), 600))
                 elif e.kind == "config":
-                    _cool(spec, CONFIG_COOLDOWN_S)
+                    _cool(spec, CONFIG_COOLDOWN_S, grow=False)
                 if e.kind == "output" and not repair:
                     msg = user + "\n\nYour previous answer was not valid JSON. Answer again with ONLY the JSON object."
                     continue
@@ -346,6 +392,7 @@ def complete_json(agent: str, prompt: str, schema: type[BaseModel], *, system: s
                     continue
                 break
             res.attempts.append(att)
+            _healthy(spec)
             res.method, res.data, res.provider, res.model, res.tokens = "llm", data, provider, model, tokens
             res.fallback = "none" if idx == 0 else ("ollama" if provider == "ollama" else "secondary")
             break
@@ -368,5 +415,6 @@ def complete_json(agent: str, prompt: str, schema: type[BaseModel], *, system: s
     _write_log(rec)
     line = (f"agent={agent} provider={res.provider or '-'} model={res.model or '-'} "
             f"latency={res.latency_s:.2f}s tokens={res.tokens or '-'} fallback={res.fallback}")
-    (log.info if res.fallback in ("none",) else log.warning)(line)
+    expected = res.fallback == "none" or not chain          # rules-only mode: the fallback IS the plan
+    (log.info if expected else log.warning)(line)
     return res
