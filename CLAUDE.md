@@ -75,7 +75,7 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   ENDPOINT_TOKEN (rotated, 40 chars), SERVICENOW_INSTANCE (dev219979), SERVICENOW_USER, GEMINI_API_KEY,
   GEMINI_MODEL_LITE, GROQ_API_KEY, OLLAMA_BASE_URL, HF_TOKEN (read), SERVICENOW_PASSWORD (ai.agent),
   SERVICENOW_ADMIN_PASSWORD (CLEARED after 1.2; admin password reset Nov 24 2026 — put it back only temporarily
-  to re-run servicenow_setup.py, then clear again). Still empty: LLM_* agent map (2.1). Claude checks .env only by key names / lengths / masked shape — never values.
+  to re-run servicenow_setup.py, then clear again). LLM_* agent map set by Claude in 2.1 (model names, not secrets). Claude checks .env only by key names / lengths / masked shape — never values.
   Common paste mistakes seen: whole `NAME='…'` line pasted inside the quotes; file not saved (Ctrl+S);
   whole file overwritten instead of one line edited.
 - Ollama: D:\Ollama (ollama.exe not on PATH in old terminals), models in D:\Ollama\models (user env OLLAMA_MODELS),
@@ -84,9 +84,12 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 ## Code layout
 - `src/common/config.py` — paths, EMBED_MODEL=BAAI/bge-small-en-v1.5 (384-d, query instruction prefix), SEED=42,
   TEST_FRACTION=0.20, RRF_K=60, BM25_K1=1.2, BM25_B=0.75, WEAK_EVIDENCE_COSINE=0.55. `check_db.py`.
-- `src/common/llm.py` — `gemini_json(prompt, model=None, timeout=30)` via REST generateContent; returns None on failure.
+- `src/common/llm.py` — old `gemini_json` (to be removed when agents use the router, 2.4).
+- `src/common/llm_router.py` — `complete_json(agent, prompt, Schema, system=, fallback=)` -> LLMResult
+  (method llm|rule-based|none, data, provider, model, latency_s, tokens, fallback, attempts, summary()).
+  CALLERS dict (gemini/groq/ollama) is what tests patch with fake LLMs.
 - `src/common/check_llms.py` — pings Gemini / Groq / Ollama: lists live models, skips non-chat models, sends one
-  JSON prompt, prints latency (`--provider`, `--list`). Never prints keys.
+  JSON prompt, prints latency (`--provider`, `--list`, `--agents` = per-agent chain via the router). Never prints keys.
 - `src/knowledge/eval_retrieval.py --limit N` is a smoke test and does NOT save results (only full runs do).
 - `src/knowledge/` — prepare.py (jsonl + stratified split: 1199 train / 301 test), bm25.py, embeddings.py,
   schema.sql (kb_incidents / kb_sops / kb_policies, vector(384), HNSW cosine), ingest.py, retriever.py
@@ -277,10 +280,21 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 **Phase 1 COMPLETE (Nov 24 2026)** — branch phase-1-servicenow merged into main.
 
 ## Phase 2 — Multi-agent LangGraph with multiple LLMs (REQUIRED)
-- [ ] 2.1 `src/common/llm_router.py`: providers Gemini / Groq / Ollama behind one interface; per-agent model map
+- [x] 2.1 `src/common/llm_router.py`: providers Gemini / Groq / Ollama behind one interface; per-agent model map
       from `.env`; strict JSON-schema output (pydantic) with repair/retry; timeouts; fallback chain
       (primary -> secondary provider -> rule-based); log agent, provider, model, latency, tokens, fallback used.
-- [ ] 2.2 `src/common/check_llms.py`: pings every configured provider/model.
+      (Nov 24 2026: model map confirmed by user = "mixed providers": UNDERSTANDING groq:openai/gpt-oss-20b,
+      RETRIEVAL gemini:gemini-3.5-flash-lite, RCA groq:openai/gpt-oss-120b, CRITIC gemini:gemini-3.5-flash,
+      COMMUNICATION groq:qwen/qwen3.8-27b. Secondary = other provider (critic -> gpt-oss-120b, never the
+      Understanding model); Ollama opt-in (LLM_OLLAMA_FALLBACK=1). Per-agent timeouts (6-25 s) + total budget
+      2.5x; cooldown 120 s after 429/5xx/timeout, 900 s after 401/403/404 -> a slow Gemini costs one timeout
+      per run, not per ticket. One repair retry on invalid JSON/schema. Log: logs/llm_calls.jsonl + "llm" logger.
+      Process env LLM_MODE=multi|single|off, LLM_SINGLE for ablations. 17 offline tests (tests/test_llm_router.py);
+      live: retired model id -> 404 -> secondary; proxy off -> rule-based in <2 s, 2nd call skips instantly.)
+- [x] 2.2 `src/common/check_llms.py`: pings every configured provider/model.
+      (`--agents`: per agent chain, direct ping of each model, one router call. Live Nov 24 2026: all 5 agents
+      answered by their primary (groq 0.8-1.1 s, gemini lite 2.1 s, gemini flash 1.4 s). Gemini is flaky today:
+      3.5-flash and 3.5-flash-lite alternated between 1-3 s answers, 503 "high demand" and an 18.9 s answer.)
 - [ ] 2.3 Supervisor/orchestrator node routing between agents (access-request flow vs incident flow).
 - [ ] 2.4 Understanding Agent uses LLM extraction (schema-validated) with rule-based fallback.
       Fix rule-based bug: "I need ChatGPT to debug my Python code" -> Python.Python.3.12 (software keyword wins;

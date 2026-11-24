@@ -146,3 +146,17 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
 - 68 offline unit tests (stdlib unittest). Test incidents INC0010001-24 remain on the PDI (labelled or closed).
 - User asked whether other services/apps must be supported: yes -> TODO 3.8 (catalogue extension per policy).
 - **Phase 1 complete.** Next: Phase 2 (LLM router with per-agent models, supervisor, critic, checkpointer).
+
+## 11. Phase 2 — Multi-agent LangGraph with multiple LLMs (Nov 24 2026, branch phase-2-multi-llm)
+- Start check: check_db OK, check_sn_auth 200, check_llms all OK, 68 tests OK. Extra pings: gemini-3.5-flash
+  2.7-3.3 s, gpt-oss-120b 1.2-1.4 s, qwen3.8-27b 0.8-0.9 s, gemini-3.1-flash-lite 503 (excluded).
+- Model map (user chose "mixed providers"): fast Groq models where a ticket waits (understanding, RCA,
+  communication), Gemini for retrieval query rewriting and for the critic (different vendor and model family).
+- Provider probe: Groq accepts reasoning_effort=low for gpt-oss (fewer hidden reasoning tokens); Gemini 3.x
+  accepts thinkingConfig.thinkingLevel (minimal for lite, low for flash). gemini-3.5-flash returned 503 three
+  times then a 30 s read timeout during the probe -> this is the cause of the old "first ticket 20-45 s".
+- 2.1 router design: chain primary -> other provider [-> Ollama opt-in] -> rule-based; per-agent timeout and a
+  total budget; cooldown per model after 429/5xx/timeout (120 s) or 401/403/404 (900 s) so a failing model is
+  skipped immediately for the rest of a worker run; one repair retry with the validation error; critic chain
+  never contains the Understanding model. Live: retired model id -> 404 -> secondary; dead proxy -> rule-based.
+- 2.2 `check_llms --agents`: all five agents answered by their primary model live.
