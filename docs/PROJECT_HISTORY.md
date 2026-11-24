@@ -3,7 +3,8 @@
 Condensed record of everything decided and built before work moved to VS Code. Read together with CLAUDE.md.
 
 ## 1. Synthetic dataset generation (Kaggle)
-- Notebook `ITSM_Mistral7B_Dataset_Generation_Kaggle.ipynb` (45 cells) + guide. Mistral-7B-Instruct-v0.3,
+- Notebook `ITSM_Mistral7B_Dataset_Generation_Kaggle.ipynb` (45 cells) + guide; saved in the repo as
+  `data/raw/data_gen.ipynb` (scanned Nov 24 2026: no secrets; HF token was read via Kaggle UserSecretsClient). Mistral-7B-Instruct-v0.3,
   4-bit NF4 (bitsandbytes), Kaggle 2x T4. Model loaded in 125 s.
 - Principle: Python decides structure (categories, IDs, decisions, roles, risk, distributions); the LLM writes only
   text fields, prompted with fixed facts + linked SOP + linked policy. Checkpoint/resume.
@@ -57,7 +58,7 @@ Condensed record of everything decided and built before work moved to VS Code. R
 - Extraction ran rule-based (no GEMINI_API_KEY).
 - Approval was given by manager01 although POL-0025 names SECURITY_TEAM -> approver role check needed.
 
-## 6. ServiceNow (PDI dev195312, Brazil release)
+## 6. ServiceNow (PDI dev195312, Brazil release — replaced by dev219979 in Nov 2026; new instance starts empty)
 - "Internal Integration User" replaces "Web service access only". Users: employee01 (manager set via
   Configure -> Form Layout), manager01, ai.agent (itil, approval_admin). Group setup scripted.
 - Nav filter "No Results" is normal: press Enter or use direct URLs (e.g. sys_user_list.do).
@@ -68,9 +69,34 @@ Condensed record of everything decided and built before work moved to VS Code. R
 ## 7. Security notes
 - Neon password, ENDPOINT_TOKEN, ServiceNow admin and ai.agent passwords appeared in screenshots, and an
   apikey.txt was on the desktop. All should be rotated; never put secrets in chat, screenshots or Git.
+- Nov 24 2026 (Phase 0.2): rotated. Neon password reset twice (the first new one was pasted into chat), ENDPOINT_TOKEN
+  regenerated locally by Claude (40 chars, never displayed), ServiceNow admin password reset (it was visible in a
+  dev219979 screenshot), old HF token revoked and OneDrive\Desktop\apikey.txt (an HF token) deleted.
+  Old ai.agent password is moot (old instance gone).
 
 ## 8. Demo script (for viva)
 Prep (Admin, employee01 signed out): reset + apply scripts, delete data/tickets.db. Show datasets, check_db,
 saved retrieval results, employee01 blocked sites, start endpoint service (Admin), /health, then tickets one by
 one with `cli new` + `cli process --all`: ChatGPT (DENY), Gemini (ALLOW), GitHub (approval, then `cli approve`),
 show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop service and restore restrictions.
+
+## 9. Move to VS Code / Claude Code — Phase 0 (Nov 24 2026)
+- Repo scan: everything in CLAUDE.md exists EXCEPT `src/integrations/` (empty — the ServiceNow scripts were never
+  committed; to be rewritten in 0.7 / 1.1 / 1.2). Offline check: decide() gives the expected decision for all 15
+  catalogue targets. Found: rule-based extraction maps "I need ChatGPT to debug my Python code" to a Python install
+  (TODO 2.4); rollback gaps (3.6); 1500 s endpoint timeout (3.7); data/processed must be rebuilt on a new machine (5.4).
+- ServiceNow PDI changed: dev195312 -> **dev219979** (Brazil, empty instance; users/group/catalog items to recreate).
+- 0.1 `.env.example` (17 keys) committed; `.gitignore` ignores `.env`, `*.env`, `.env.*` but keeps the template.
+- 0.2 secrets rotated (see section 7). Endpoint tests: /health 200, /status with new token 200 (10 domains blocked,
+  allowlist empty, DownloadRestrictions 3), wrong/no token 401. check_db OK (Neon now PostgreSQL 18.7).
+- 0.3 Gemini: new key format `AQ.…` (53 chars). Key list has 49 generateContent models; gemini-2.5-flash-lite
+  returns 404 for new users -> GEMINI_MODEL_LITE='gemini-3.5-flash-lite' (~1.3 s). One call timed out at 30 s.
+- 0.4 Groq: no Llama chat models any more (only llama-prompt-guard classifiers). Chat models with JSON mode:
+  openai/gpt-oss-20b (~0.5 s), openai/gpt-oss-120b, qwen/qwen3.8-27b, allam-2-7b.
+- 0.5 Ollama 0.40.18 installed with winget to D:\Ollama (C: has ~6 GB free), OLLAMA_MODELS=D:\Ollama\models,
+  llama3.2:3b (1.9 GB) on RTX 2050: cold ~9 s, warm ~2.6 s. First-ever load crashed once (CUDA v13 init, 0xc0000409);
+  not reproducible. Only ~0.8 GB RAM free during load -> Ollama is a fallback, not a primary provider.
+- Lesson: `eval_retrieval --limit 3` overwrote the saved 301-ticket results; restored from git and the script now
+  refuses to save partial runs.
+- Working style: Claude runs every terminal command itself; the user only does browser/ServiceNow/Admin-terminal
+  steps and types secrets into .env (never into chat).

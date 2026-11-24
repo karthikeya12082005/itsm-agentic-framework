@@ -19,20 +19,21 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
    Bayesian root-cause ranking, SOP-based remediation, predicate verification with bounded retry, rollback.
 
 ## REQUIRED scope for the final system (user's decision)
-- **ServiceNow is REQUIRED, not optional.** ServiceNow PDI (dev195312, Brazil release) is the system of record for
-  tickets: employees raise requests/incidents in ServiceNow; the agents read them via the REST Table API, write
-  work notes, set state, and handle approvals (sysapproval_approver). The local SQLite desk (src/access/store.py)
-  is only a fallback/test double behind the same interface. First task: fix the 401 auth for user ai.agent
+- **ServiceNow is REQUIRED, not optional.** ServiceNow PDI (**dev219979**, Brazil release; replaced the old
+  dev195312 in Nov 2026 — the new instance is EMPTY: users, group and catalog items must be created again) is the
+  system of record for tickets: employees raise requests/incidents in ServiceNow; the agents read them via the
+  REST Table API, write work notes, set state, and handle approvals (sysapproval_approver). The local SQLite desk
+  (src/access/store.py) is only a fallback/test double behind the same interface. Integration user ai.agent
   (role: Internal Integration User + itil + approval_admin; 24-char alphanumeric password; single-quoted in .env).
-  Catalog items already scripted in src/integrations/servicenow_setup.py: "Request website or AI tool access",
-  "Request software installation".
+  Catalog items to create: "Request website or AI tool access", "Request software installation".
 - **Agentic AI with LangGraph and MULTIPLE LLMs is REQUIRED.** It is a multi-agent system: each agent is a
   LangGraph node/subgraph with its own role, tools and its own configured LLM. Use agentic concepts explicitly:
   supervisor/orchestrator routing, tool calling, ReAct-style diagnosis loops, shared typed state, checkpointing
   (persist graph state so approvals can pause/resume), human-in-the-loop interrupts for approvals,
   a critic/reflection step before execution, guardrails, and full traceability of every agent step.
 - **LLM per agent** (configurable in one place, e.g. `src/common/llm_router.py` + `.env`; provider-agnostic
-  wrapper supporting Gemini API, Groq (Llama models) and local Ollama; verify current model IDs before use):
+  wrapper supporting Gemini API, Groq (gpt-oss / Qwen models — Groq dropped Llama chat models) and local
+  Ollama; verify current model IDs before use with `python -m src.common.check_llms --list`):
   - Understanding Agent: small fast model (extraction/classification to strict JSON schema).
   - Retrieval Agent: query rewriting / optional LLM re-ranking on top of BM25 + dense + RRF.
   - RCA Agent (Objective 3): stronger reasoning model generating hypotheses; combined with Bayesian ranking.
@@ -57,17 +58,28 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 ## Environment
 - Windows 11 Home Single Language. Project root: `D:\Documents\college\Major Project\itsm-agentic-framework`
   (path has a space — always quote it).
+- Hardware: i5-12450H, 7.6 GB RAM (tight), NVIDIA RTX 2050 4 GB + Intel UHD, C: ~6 GB free (install big things
+  on D:), D: ~190 GB free.
 - Python 3.12.5, venv `.venv` (`.\.venv\Scripts\Activate.ps1`). Use `python`, not `py -3.11`.
 - Restricted local standard user: `employee01` (role DEVELOPER, manager manager01). Admin user: Karthikeya.
-- Neon serverless PostgreSQL 18.6 + pgvector 0.8.6 (Singapore).
-- `.env` (NEVER commit, never print values; single-quoted values): DATABASE_URL, ENDPOINT_TOKEN (>=24 chars),
-  ENDPOINT_URL, optional GEMINI_API_KEY, GEMINI_MODEL_LITE, SERVICENOW_INSTANCE, SERVICENOW_USER='ai.agent',
-  SERVICENOW_PASSWORD. Several secrets were exposed in screenshots earlier and should be rotated.
+- Neon serverless PostgreSQL 18.7 (was 18.6; Neon upgrades minor versions) + pgvector 0.8.6 (Singapore).
+- `.env` (NEVER commit, never print values; single-quoted values) has the same 17 keys, in the same order, as the
+  committed template `.env.example`. Set so far (Nov 24 2026): DATABASE_URL (rotated), ENDPOINT_URL,
+  ENDPOINT_TOKEN (rotated, 40 chars), SERVICENOW_INSTANCE (dev219979), SERVICENOW_USER, GEMINI_API_KEY,
+  GEMINI_MODEL_LITE, GROQ_API_KEY, OLLAMA_BASE_URL. Still empty: SERVICENOW_PASSWORD (0.7), HF_TOKEN (0.6),
+  LLM_* agent map (2.1). Claude checks .env only by key names / lengths / masked shape — never values.
+  Common paste mistakes seen: whole `NAME='…'` line pasted inside the quotes; file not saved (Ctrl+S);
+  whole file overwritten instead of one line edited.
+- Ollama: D:\Ollama (ollama.exe not on PATH in old terminals), models in D:\Ollama\models (user env OLLAMA_MODELS),
+  tray app starts with Windows and serves http://localhost:11434.
 
 ## Code layout
 - `src/common/config.py` — paths, EMBED_MODEL=BAAI/bge-small-en-v1.5 (384-d, query instruction prefix), SEED=42,
   TEST_FRACTION=0.20, RRF_K=60, BM25_K1=1.2, BM25_B=0.75, WEAK_EVIDENCE_COSINE=0.55. `check_db.py`.
 - `src/common/llm.py` — `gemini_json(prompt, model=None, timeout=30)` via REST generateContent; returns None on failure.
+- `src/common/check_llms.py` — pings Gemini / Groq / Ollama: lists live models, skips non-chat models, sends one
+  JSON prompt, prints latency (`--provider`, `--list`). Never prints keys.
+- `src/knowledge/eval_retrieval.py --limit N` is a smoke test and does NOT save results (only full runs do).
 - `src/knowledge/` — prepare.py (jsonl + stratified split: 1199 train / 301 test), bm25.py, embeddings.py,
   schema.sql (kb_incidents / kb_sops / kb_policies, vector(384), HNSW cosine), ingest.py, retriever.py
   (PgVectorIndex, rrf_fuse, HybridRetriever: bm25|dense|hybrid, category filter, CANDIDATES=50), eval_retrieval.py.
@@ -83,9 +95,10 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   request_approval, execution, verification, communication), graph.py (LangGraph StateGraph; START routes new /
   resume-approved / resume-rejected), cli.py (new, process [--all], approve [--reject] [--by], show, list, demo,
   --no-retrieval).
-- `src/integrations/` — ServiceNow PDI dev195312 scripts: servicenow_setup.py (admin via getpass; checks users,
-  group, roles; creates the two catalog items; `--test-order` via order_now), check_sn_auth.py, test_servicenow.py.
-  Was paused because of a 401 for ai.agent — now REQUIRED; resume here.
+- `src/integrations/` — **EMPTY on disk** (the earlier servicenow_setup.py / check_sn_auth.py / test_servicenow.py
+  were never committed and are lost). To be written for PDI dev219979: check_sn_auth.py (item 0.7),
+  servicenow_client.py (1.1), servicenow_setup.py (1.2: admin via getpass; users, group, roles, the two catalog
+  items, `--test-order`).
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
 ## Catalogue (src/access/catalog.py)
@@ -130,14 +143,26 @@ listed test and show the output. Tick `[x]` here only when the acceptance test p
 Never mark an item done on assumptions. Keep this list updated (add items you discover). Commit after each phase.
 
 ## Phase 0 — Accounts, API keys and environment (guide the user step by step; see "API KEY GUIDE" below)
-- [ ] 0.1 Create `.env.example` (all variable names, no values) and make sure `.env` is in .gitignore.
-- [ ] 0.2 Rotate exposed secrets: Neon password, ENDPOINT_TOKEN, ServiceNow admin + ai.agent passwords; delete
+- [x] 0.1 Create `.env.example` (all variable names, no values) and make sure `.env` is in .gitignore.
+- [x] 0.2 Rotate exposed secrets: Neon password, ENDPOINT_TOKEN, ServiceNow admin + ai.agent passwords; delete
       Desktop apikey.txt after moving its value into .env. Test: check_db OK, endpoint /health OK.
-- [ ] 0.3 Gemini API key. Test: `python -m src.common.check_llms` returns JSON from Gemini.
-- [ ] 0.4 Groq API key. Test: same script returns JSON from Groq.
-- [ ] 0.5 Ollama installed + one small local model pulled. Test: same script returns JSON from Ollama.
+- [x] 0.3 Gemini API key. Test: `python -m src.common.check_llms` returns JSON from Gemini.
+      (check_llms.py written: lists live models per provider, pings with a JSON prompt. Verified Nov 2026:
+      GEMINI_MODEL_LITE='gemini-3.5-flash-lite' ~1.3 s; gemini-2.5-flash-lite is listed but returns 404 "no longer
+      available to new users"; one call hit the 30 s timeout -> router must time out + fall back.)
+- [x] 0.4 Groq API key. Test: same script returns JSON from Groq.
+      (Verified Nov 2026: Groq has NO Llama chat models any more — only llama-prompt-guard classifiers. JSON-capable
+      chat models: openai/gpt-oss-20b ~0.5 s, openai/gpt-oss-120b ~0.7 s, qwen/qwen3.8-27b ~0.4 s, allam-2-7b.
+      check_llms skips non-chat models (guard/whisper/tts/image).)
+- [x] 0.5 Ollama installed + one small local model pulled. Test: same script returns JSON from Ollama.
+      (Ollama 0.40.18 via winget at D:\Ollama; user env OLLAMA_MODELS=D:\Ollama\models because C: has only ~6 GB
+      free. Model llama3.2:3b (1.9 GB, ~80% on RTX 2050 GPU): cold load ~9 s, warm ~2.6 s. The very first load
+      after install crashed once with a CUDA v13 init error (0xc0000409, ggml_cuda_kernel_can_use_pdl); not
+      reproducible on two cold reloads. If it recurs: set user env OLLAMA_LLM_LIBRARY=cuda_v12 and restart Ollama.
+      Only ~0.8 GB RAM was free during load — keep Ollama optional, never the only provider.)
 - [ ] 0.6 HF_TOKEN (read-only) to remove the HF warning. Test: no warning on eval_retrieval.
-- [ ] 0.7 ServiceNow PDI awake and reachable; ai.agent login works. Test: `python -m src.integrations.check_sn_auth` = 200.
+- [ ] 0.7 ServiceNow PDI (dev219979) awake and reachable; create ai.agent on the new instance; write
+      `src/integrations/check_sn_auth.py` (missing). Test: `python -m src.integrations.check_sn_auth` = 200.
 - [ ] 0.8 `.gitignore` contains .env, data/tickets.db, checkpoint DBs, logs, audit jsonl. `pip install -r requirements.txt` clean.
 
 ## Phase 1 — ServiceNow integration (REQUIRED)
@@ -162,6 +187,8 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 - [ ] 2.2 `src/common/check_llms.py`: pings every configured provider/model.
 - [ ] 2.3 Supervisor/orchestrator node routing between agents (access-request flow vs incident flow).
 - [ ] 2.4 Understanding Agent uses LLM extraction (schema-validated) with rule-based fallback.
+      Fix rule-based bug: "I need ChatGPT to debug my Python code" -> Python.Python.3.12 (software keyword wins;
+      known AI-tool names without a domain are not recognised). Add tests for such sentences.
 - [ ] 2.5 Retrieval Agent: LLM query rewriting (optional flag) before BM25 + dense + RRF.
 - [ ] 2.6 Critic/Reflection Agent with a DIFFERENT model: reviews proposed plan vs SOP/policy; can only block or
       escalate, never override the rule-based decision.
@@ -176,6 +203,9 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 - [ ] 3.2 Approver role enforcement (also in ServiceNow).
 - [ ] 3.3 Revocation / time-limited access (duration variable) with automatic rollback when expired.
 - [ ] 3.4 Unknown target -> ESCALATE_FOR_REVIEW; test with a domain not in the catalogue.
+- [ ] 3.6 Rollback correctness: winget uninstall must use `--scope machine` (as install does); domain rollback
+      must restore the recorded "before" allowlist (not revoke a grant that existed before the ticket).
+- [ ] 3.7 Endpoint client timeout (1500 s) must not block the poller: run installs asynchronously or per-ticket.
 - [ ] 3.5 `evaluation/eval_access.py`: batch of labelled requests (incl. dataset access tickets) -> decision exact
       match, automation rate, escalation rate, approval rate, MTTA, MTTR, verification pass rate; save tables.
 
@@ -198,6 +228,8 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
 - [ ] 5.2 Simple dashboard (Streamlit or FastAPI page) showing tickets, agent trace, metrics.
 - [ ] 5.3 One-command demo scripts (`scripts/demo_access.ps1`, `scripts/demo_incident.ps1`) + reset script.
 - [ ] 5.4 README with setup, architecture diagram, run steps; update CLAUDE.md and docs/PROJECT_HISTORY.md.
+      Include `python -m src.knowledge.prepare` (data/processed is gitignored but agents.py loads it at import).
+      Commit the dataset notebook data/raw/data_gen.ipynb (checked: no secrets inside).
 - [ ] 5.5 Full clean-machine run-through following README only; fix anything that fails.
 
 ---------------------------------------------------------------------------------------------------------------
@@ -212,8 +244,8 @@ user sees, ask for a screenshot and adapt.
 | DATABASE_URL | Neon Postgres | console.neon.tech -> project -> Connect -> copy connection string (psycopg, sslmode=require). Reset password: Roles -> reset. |
 | ENDPOINT_TOKEN | secret for endpoint service | generate locally: `-join ((48..57)+(65..90)+(97..122) \| Get-Random -Count 40 \| % {[char]$_})` |
 | ENDPOINT_URL | `'http://127.0.0.1:8765'` | fixed |
-| GEMINI_API_KEY | Google Gemini | aistudio.google.com -> sign in -> Get API key -> Create API key -> copy |
-| GROQ_API_KEY | Groq (Llama models) | console.groq.com -> sign in -> API Keys -> Create API Key -> copy (shown once) |
+| GEMINI_API_KEY | Google Gemini | aistudio.google.com -> sign in -> Get API key -> Create API key -> copy (new keys look like `AQ.…`, 53 chars, not `AIza…`). Paste ONLY the key between the quotes, not the whole `NAME='…'` line. |
+| GROQ_API_KEY | Groq (gpt-oss, Qwen) | console.groq.com -> sign in -> API Keys -> Create API Key -> copy (shown once, starts `gsk_`) |
 | OLLAMA_BASE_URL | local Ollama | install from ollama.com (Windows installer), then `ollama pull <small model>`; value `'http://localhost:11434'` |
 | HF_TOKEN | Hugging Face (read) | huggingface.co -> Settings -> Access Tokens -> Create new token -> type Read |
 | SERVICENOW_INSTANCE | PDI URL | developer.servicenow.com -> My Instance (wake it if hibernating) -> `'https://devXXXXXX.service-now.com'` |
