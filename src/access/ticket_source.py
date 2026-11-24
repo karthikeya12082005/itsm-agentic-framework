@@ -15,29 +15,30 @@ Neutral ticket statuses used by agents/worker/CLI and how ServiceNowSource store
   CLOSED_REJECTED     state 8 Canceled, close_notes = reason (policy DENY or approver rejected)
   ESCALATED           state 2 In Progress, reassigned to the human group "Service Desk"
 
-ServiceNow has no place for the agents' structured context (decision, policy, evidence) that is needed to
-resume after an approval, so ServiceNowSource keeps it in data/agent_state.db keyed by instance + number
-(replaced by the LangGraph checkpointer in item 2.8). Everything human-relevant is in ServiceNow itself.
+The agents' structured context (decision, policy, evidence, critic, trace) lives in the LangGraph checkpoint
+of the ticket's thread (src/orchestrator/checkpoint.py, item 2.8; thread_id = thread_id(number)). Sources read
+decision/target for list/show from it via attach_checkpoints(). Everything human-relevant is in ServiceNow.
+(Phase 1 kept this in data/agent_state.db; that file is no longer used.)
 
 Live self-test against the PDI (creates 3 "[selftest]" incidents and closes them):
     python -m src.access.ticket_source selftest
 """
 from __future__ import annotations
 
-import json
 import re
-import sqlite3
 import sys
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.access.catalog import APPROVER_GROUPS, EMPLOYEES, LOCAL_GROUP_MEMBERS
 from src.access.store import TicketStore, now
-from src.common.config import PROJECT_ROOT
+from src.orchestrator import checkpoint as cp
+from src.orchestrator.trace import as_note, format_step
 
 STATUSES = ("NEW", "IN_PROGRESS", "AWAITING_APPROVAL", "RESOLVED", "CLOSED_REJECTED", "ESCALATED")
 CLOSED = {"RESOLVED", "CLOSED_REJECTED"}
-CONTEXT_KEYS = ("understanding", "evidence", "policy", "execution", "attempts", "verified")
+CONTEXT_KEYS = ("understanding", "evidence", "policy", "critic", "execution", "attempts", "verified")
 
 
 # ============================================================================================== interface
@@ -91,13 +92,31 @@ class TicketSource(ABC):
     def approvers(self, role: str | None, ticket: dict) -> set[str]:
         """User names allowed to approve for a policy approver_role on this ticket."""
 
+    @abstractmethod
+    def fetch_stuck(self, older_than_s: float = 600) -> list[str]:
+        """IN_PROGRESS tickets of the agents not touched for older_than_s seconds (crashed / unsaved runs)."""
+
     def link(self, number: str) -> str:
         return ""
 
-    def add_trace(self, number: str, steps: list[tuple[str, str]]) -> None:
+    def thread_id(self, number: str) -> str:
+        """LangGraph thread of this ticket (checkpointer key)."""
+        return f"{self.name}|{number}"
+
+    _saver = None
+
+    def attach_checkpoints(self, saver) -> "TicketSource":
+        """Read decision/target/context of tickets from the LangGraph checkpointer."""
+        self._saver = saver
+        return self
+
+    def _summary(self, number: str) -> dict:
+        return cp.summary(self._saver, self.thread_id(number)) if self._saver is not None else {}
+
+    def add_trace(self, number: str, steps: list) -> None:
         """All agent steps of one graph run, in execution order (default: one note per step)."""
-        for agent, note in steps:
-            self.add_note(number, agent, note)
+        for s in steps:
+            self.add_note(number, *as_note(s))
 
     # ------------------------------------------------------------------ shared logic
     def may_approve(self, user: str, role: str | None, ticket: dict) -> tuple[bool, str]:
@@ -111,17 +130,18 @@ class TicketSource(ABC):
             return True, f"{user} is {role}"
         return False, f"{user} is not {role} (allowed: {', '.join(sorted(allowed)) or 'nobody'})"
 
-    def save_result(self, number: str, ticket: dict, result: dict) -> None:
-        """Write one graph run back: every agent step (trace), the structured context, the message, the status."""
-        steps = list(result.get("notes", []))
+    def save_result(self, number: str, ticket: dict, result: dict, steps: list | None = None) -> None:
+        """Write one graph run back: its agent steps (trace), the structured context, the message, the status.
+        `steps` = the trace entries of THIS run (default: the whole trace in result)."""
+        steps = list(result.get("trace", []) if steps is None else steps)
         final = result["final_state"]
         u, p = result.get("understanding") or {}, result.get("policy") or {}
         if final == "AWAITING_APPROVAL":
             role = p.get("approver_role")
             who = ", ".join(sorted(self.approvers(role, ticket))) or "nobody is configured for this role"
-            steps.append(("Policy & Risk Agent",
+            steps.append({"agent": "Policy & Risk Agent", "model": "deterministic", "output":
                           f"waiting for approval by {role}: {who}. "
-                          f"Approve: python -m src.access.cli approve {number} --by <user> [--reject]"))
+                          f"Approve: python -m src.access.cli approve {number} --by <user> [--reject]"})
         self.add_trace(number, steps)
         self.save_context(number, {
             "final_state": final, "decision": p.get("decision"), "target": u.get("target"),
@@ -139,7 +159,12 @@ class LocalSource(TicketSource):
     name = "local"
 
     def __init__(self, path: Path | None = None):
-        self.store = TicketStore(Path(path)) if path else TicketStore()
+        from src.access.store import DB_PATH
+        self.path = Path(path) if path else DB_PATH
+        self.store = TicketStore(self.path)
+
+    def thread_id(self, number):
+        return f"local|{self.path.resolve()}|{number}"
 
     def create(self, requester, text):
         return self.store.create(requester, text)
@@ -149,7 +174,13 @@ class LocalSource(TicketSource):
         who = EMPLOYEES.get(t["requester"], {})
         t["requester_role"] = who.get("role", "EMPLOYEE")
         t["requester_manager"] = who.get("manager", "")
+        t["category"] = "access"
         return t
+
+    def fetch_stuck(self, older_than_s=600):
+        limit = (datetime.now(timezone.utc) - timedelta(seconds=older_than_s)).isoformat(timespec="seconds")
+        return [r["number"] for r in reversed(self.store.list(100000)) if r["state"] == "IN_PROGRESS"
+                and (self.store.get(r["number"]).get("acknowledged_at") or "") <= limit]
 
     def list(self, limit=20):
         return self.store.list(limit)
@@ -194,11 +225,10 @@ class LocalSource(TicketSource):
 
 
 # ============================================================================================== ServiceNow
-STATE_DB = PROJECT_ROOT / "data" / "agent_state.db"
 AGENT_GROUP = "AI Service Desk"
 ESCALATION_GROUP = "Service Desk"
 ACCESS_CATEGORY = "access"
-SN_FIELDS = ("sys_id,number,short_description,description,state,approval,assignment_group,caller_id,"
+SN_FIELDS = ("sys_id,number,short_description,description,state,approval,assignment_group,caller_id,category,"
              "caller_id.user_name,caller_id.title,caller_id.manager.user_name,sys_created_on,resolved_at")
 SN_APPROVAL = {"requested": "PENDING", "approved": "APPROVED", "rejected": "REJECTED"}
 # Our work notes: "[#<seq> <agent>] text". ServiceNow journal timestamps have 1-second resolution, so notes
@@ -227,39 +257,18 @@ def parse_work_notes(entries: list[dict]) -> list[dict]:
     return [r for _, r in sorted(rows, key=lambda x: x[0])]
 
 
-class AgentStateStore:
-    """Structured agent context per ticket (JSON), merged on save. data/agent_state.db (gitignored)."""
-
-    def __init__(self, path: Path = STATE_DB):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
-        self.db.execute("CREATE TABLE IF NOT EXISTS agent_state (key TEXT PRIMARY KEY, data TEXT NOT NULL, "
-                        "updated_at TEXT NOT NULL)")
-        self.db.commit()
-
-    def load(self, key: str) -> dict:
-        row = self.db.execute("SELECT data FROM agent_state WHERE key = ?", (key,)).fetchone()
-        return json.loads(row[0]) if row else {}
-
-    def save(self, key: str, data: dict) -> None:
-        merged = {**self.load(key), **data}
-        self.db.execute("INSERT INTO agent_state (key, data, updated_at) VALUES (?,?,?) ON CONFLICT(key) "
-                        "DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
-                        (key, json.dumps(merged, default=str), now()))
-        self.db.commit()
-
-
 class ServiceNowSource(TicketSource):
     """Incident table of the PDI through ServiceNowClient (as ai.agent)."""
     name = "servicenow"
 
-    def __init__(self, client=None, state_db: Path = STATE_DB):
+    def __init__(self, client=None, checkpoints=None):
         if client is None:
             from src.integrations.servicenow_client import ServiceNowClient
             client = ServiceNowClient.from_env()
         self.sn = client
-        self.state = AgentStateStore(state_db)
         self._cache: dict[str, str] = {}
+        if checkpoints is not None:
+            self.attach_checkpoints(checkpoints)
 
     # ------------------------------------------------------------------ lookups (cached sys_ids)
     def _lookup(self, key, table, query, missing):
@@ -284,7 +293,7 @@ class ServiceNowSource(TicketSource):
         except LookupError:
             raise KeyError(number) from None
 
-    def _key(self, number):
+    def thread_id(self, number):
         return f"{self.sn.instance}|{number}"
 
     def link(self, number):
@@ -318,7 +327,7 @@ class ServiceNowSource(TicketSource):
     def get(self, number):
         sid = self._sys_id(number)
         r = self.sn.get("incident", sid, SN_FIELDS)
-        st = self.state.load(self._key(number))
+        st = self._summary(number)
         # create() stores short_description = first 157 chars + "..." and description = full text;
         # a ticket typed in the UI may have only a short description, or two different texts
         short, desc = (r.get("short_description") or "").strip(), (r.get("description") or "").strip()
@@ -328,7 +337,8 @@ class ServiceNowSource(TicketSource):
         return {"number": number, "sys_id": sid, "requester": r.get("caller_id.user_name", ""),
                 "requester_role": r.get("caller_id.title") or "EMPLOYEE",
                 "requester_manager": r.get("caller_id.manager.user_name") or "",
-                "description": text, "state": self._status(r), "approval_status": SN_APPROVAL.get(r["approval"]),
+                "description": text, "category": r.get("category") or "",
+                "state": self._status(r), "approval_status": SN_APPROVAL.get(r["approval"]),
                 "created_at": r["sys_created_on"], "acknowledged_at": st.get("acknowledged_at"),
                 "resolved_at": r.get("resolved_at") or None, "decision": st.get("decision"),
                 "target": st.get("target"), "policy_id": st.get("policy_id"), "sop_id": st.get("sop_id"),
@@ -342,7 +352,7 @@ class ServiceNowSource(TicketSource):
                              limit=limit, order_by="-number")
         out = []
         for r in rows:
-            st = self.state.load(self._key(r["number"]))
+            st = self._summary(r["number"])
             out.append({"number": r["number"], "requester": r.get("caller_id.user_name", ""),
                         "state": self._status(r), "decision": st.get("decision"), "target": st.get("target"),
                         "created_at": r["sys_created_on"], "resolved_at": r.get("resolved_at") or None})
@@ -355,25 +365,36 @@ class ServiceNowSource(TicketSource):
             self._cache[f"inc:{r['number']}"] = r["sys_id"]
         return [r["number"] for r in rows]
 
+    def fetch_stuck(self, older_than_s=600):
+        rows = self.sn.query("incident", f"assignment_group={self._group(AGENT_GROUP)}^state=2",
+                             "sys_id,number,sys_updated_on", limit=100, order_by="sys_updated_on")
+        limit = (datetime.now(timezone.utc) - timedelta(seconds=older_than_s)).strftime("%Y-%m-%d %H:%M:%S")
+        out = []
+        for r in rows:                         # sys_updated_on is UTC "YYYY-MM-DD HH:MM:SS" (display_value off)
+            self._cache[f"inc:{r['number']}"] = r["sys_id"]
+            if r["sys_updated_on"] <= limit:
+                out.append(r["number"])
+        return out
+
     def _tag(self, number, agent):
-        """'[#<seq> <agent>]' with a per-ticket sequence number (true order despite 1-s timestamps)."""
-        seq = self.state.load(self._key(number)).get("note_seq", 0) + 1
-        self.state.save(self._key(number), {"note_seq": seq})
-        return f"[#{seq} {agent}]"
+        """'[#<seq> <agent>]' with a per-ticket sequence number (true order despite 1-s timestamps).
+        seq = highest number already on the ticket + 1 (read from the journal: correct across processes)."""
+        entries = self.sn.get_journal("incident", self._sys_id(number), "work_notes")
+        seqs = [int(m.group(1)) for e in entries if (m := _NOTE.match(e["value"])) and m.group(1)]
+        return f"[#{max(seqs, default=0) + 1} {agent}]"
 
     def acknowledge(self, number):
         self.sn.update("incident", self._sys_id(number), {
             "state": "2", "assigned_to": self._user(self.sn.user),
             "work_notes": f"{self._tag(number, 'Orchestrator')} picked up by the multi-agent framework"},
             fields="sys_id")
-        self.state.save(self._key(number), {"acknowledged_at": now()})
 
     def add_note(self, number, agent, text):
         self.sn.add_work_note("incident", self._sys_id(number), f"{self._tag(number, agent)} {text}")
 
     def add_trace(self, number, steps):
         if steps:
-            self.add_note(number, TRACE, "\n" + "\n".join(f"{i}. [{a}] {n}" for i, (a, n) in enumerate(steps, 1)))
+            self.add_note(number, TRACE, "\n" + "\n".join(format_step(i, s) for i, s in enumerate(steps, 1)))
 
     def add_comment(self, number, text):
         self.sn.add_comment("incident", self._sys_id(number), text)
@@ -400,7 +421,7 @@ class ServiceNowSource(TicketSource):
                                   f"the agent CLI (approver checked against ServiceNow; recorded by {self.sn.user})")
 
     def save_context(self, number, data):
-        self.state.save(self._key(number), data)
+        """Nothing to store: the structured context is in the LangGraph checkpoint (item 2.8)."""
 
     def approvers(self, role, ticket):
         if role == "LINE_MANAGER":
@@ -441,15 +462,18 @@ def _selftest() -> int:
     src.acknowledge(a)
     check("acknowledge -> IN_PROGRESS", src.get(a)["state"] == "IN_PROGRESS")
     check("no longer in fetch_new", a not in src.fetch_new(50))
+    check("category read from the incident", t["category"] == ACCESS_CATEGORY, t["category"])
+    check("stuck sweep sees it only after the age limit", a in src.fetch_stuck(-60) and a not in src.fetch_stuck(3600))
     src.add_note(a, "Understanding Agent", "target=github.com (managed)")
-    src.save_context(a, {"decision": "ALLOW_WITH_APPROVAL", "target": "github.com",
-                         "context": {"policy": {"approver_role": "SECURITY_TEAM"}}})
+    src.add_trace(a, [{"agent": "Policy & Risk Agent", "output": "ALLOW_WITH_APPROVAL", "model": "deterministic"},
+                      {"agent": "Critic Agent", "output": "APPROVE", "model": "groq:test", "latency_s": 0.5}])
+    seqs = [int(m.group(1)) for e in src.sn.get_journal("incident", src._sys_id(a), "work_notes")
+            if (m := _NOTE.match(e["value"])) and m.group(1)]
+    check("note sequence numbers 1..3 from the journal", sorted(seqs) == [1, 2, 3], sorted(seqs))
     src.set_status(a, "AWAITING_APPROVAL")
     t = src.get(a)
     check("AWAITING_APPROVAL (On Hold + approval requested)",
           (t["state"], t["approval_status"]) == ("AWAITING_APPROVAL", "PENDING"), (t["state"], t["approval_status"]))
-    check("context survives (decision/target/policy)", (t["decision"], t["target"],
-          t["context"]["policy"]["approver_role"]) == ("ALLOW_WITH_APPROVAL", "github.com", "SECURITY_TEAM"))
     check("approvers(SECURITY_TEAM)", src.approvers("SECURITY_TEAM", t) == {"security01"},
           src.approvers("SECURITY_TEAM", t))
     check("approvers(LINE_MANAGER) = caller's manager", src.approvers("LINE_MANAGER", t) == {"manager01"})
@@ -463,8 +487,9 @@ def _selftest() -> int:
     src.set_status(a, "RESOLVED", "[selftest] Done: GitHub is now accessible.")
     t = src.get(a)
     check("RESOLVED with resolution code + notes", t["state"] == "RESOLVED" and t["resolved_at"], t["resolved_at"])
-    check("work notes in order, agent names parsed", [n["agent"] for n in t["work_notes"]][:3] ==
-          ["Orchestrator", "Understanding Agent", "Approval"], [n["agent"] for n in t["work_notes"]])
+    check("work notes in order, agent names parsed", [n["agent"] for n in t["work_notes"]][:5] ==
+          ["Orchestrator", "Understanding Agent", "Policy & Risk Agent", "Critic Agent", "Approval"],
+          [n["agent"] for n in t["work_notes"]])
 
     b = src.create("employee01", "[selftest] I need access to some-unknown-tool.example")
     src.acknowledge(b)
@@ -475,8 +500,8 @@ def _selftest() -> int:
     src.set_status(c, "CLOSED_REJECTED", "[selftest] denied by POL-0030")
     check(f"CLOSED_REJECTED {c} (Canceled)", src.get(c)["state"] == "CLOSED_REJECTED")
     listed = {r["number"]: r for r in src.list(30)}
-    check("list shows all three with decision/target", all(n in listed for n in (a, b, c)) and
-          listed[a]["target"] == "github.com", [(n, listed.get(n, {}).get("state")) for n in (a, b, c)])
+    check("list shows all three", all(n in listed for n in (a, b, c)),
+          [(n, listed.get(n, {}).get("state")) for n in (a, b, c)])
     src.set_status(b, "CLOSED_REJECTED", "[selftest] cleanup")
     print("RESULT:", "OK" if ok else "FAILED")
     return 0 if ok else 1

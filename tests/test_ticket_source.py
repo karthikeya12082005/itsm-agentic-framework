@@ -81,9 +81,22 @@ IDS = {"group:AI Service Desk": "DESK", "group:Service Desk": "HUMANS", "user:em
 
 
 def sn_source(tmp):
+    """Mock client with a working journal: work notes written via add_work_note / update are read back."""
     sn = mock.MagicMock()
     sn.instance, sn.user = "https://dev000000.service-now.com", "ai.agent"
-    src = ServiceNowSource(client=sn, state_db=Path(tmp) / "state.db")
+    journal = []
+
+    def note(_table, _sid, text):
+        journal.insert(0, {"created_on": "2026-11-24 10:00:00", "author": "AI Agent", "value": text})
+
+    def update(table, sid, data, fields=None):
+        if "work_notes" in data:
+            note(table, sid, data["work_notes"])
+        return {"sys_id": sid}
+    sn.add_work_note.side_effect = note
+    sn.update.side_effect = update
+    sn.get_journal.side_effect = lambda *a: list(journal)
+    src = ServiceNowSource(client=sn)
     src._cache.update(IDS)
     return src, sn
 
@@ -102,7 +115,6 @@ class ServiceNowMapping(unittest.TestCase):
         self.src, self.sn = sn_source(self.tmp.name)
 
     def tearDown(self):
-        self.src.state.db.close()
         self.tmp.cleanup()
 
     def sent(self):
@@ -148,7 +160,8 @@ class ServiceNowMapping(unittest.TestCase):
             {"created_on": "2026-11-24 10:00:01", "author": "AI Agent", "kind": "Work notes",
              "value": "[#1 Understanding Agent] target=github.com\nsecond line"},
             {"created_on": "2026-11-24 10:00:00", "author": "Some Human", "kind": "Work notes", "value": "hand note"}]
-        self.src.save_context("INC0010100", {"decision": "ALLOW_WITH_APPROVAL", "target": "github.com"})
+        self.sn.get_journal.side_effect = None
+        self.src._summary = lambda n: {"decision": "ALLOW_WITH_APPROVAL", "target": "github.com"}   # checkpoint
         t = self.src.get("INC0010100")
         self.assertEqual((t["state"], t["approval_status"], t["requester_role"], t["requester_manager"]),
                          ("AWAITING_APPROVAL", "PENDING", "DEVELOPER", "manager01"))
@@ -183,7 +196,7 @@ class ServiceNowMapping(unittest.TestCase):
 
     def test_ui_ticket_with_two_texts(self):
         self.sn.get.return_value = record(short_description="GitHub please", description="for code reviews")
-        self.sn.get_journal.return_value = []
+        self.sn.get_journal.side_effect, self.sn.get_journal.return_value = None, []
         self.assertEqual(self.src.get("INC0010100")["description"], "GitHub please\nfor code reviews")
 
     def test_unknown_number_is_keyerror(self):
@@ -201,7 +214,9 @@ class ServiceNowMapping(unittest.TestCase):
         self.src.acknowledge("INC0010100")
         body = self.sent()
         self.assertEqual((body["state"], body["assigned_to"]), ("2", "AGENT"))
-        self.assertTrue(self.src.state.load(self.src._key("INC0010100"))["acknowledged_at"])
+        self.assertTrue(body["work_notes"].startswith("[#1 Orchestrator] picked up"))
+        self.src.add_note("INC0010100", "Execution Agent", "x")          # sequence continues from the journal
+        self.assertTrue(self.sn.add_work_note.call_args.args[2].startswith("[#2 Execution Agent]"))
 
     def test_notes_comments_approval(self):
         self.src.add_note("INC0010100", "Execution Agent", "attempt 1 ok")
@@ -221,16 +236,22 @@ class ServiceNowMapping(unittest.TestCase):
         self.assertEqual(self.src.approvers("LINE_MANAGER", t), {"manager01"})
         self.assertEqual(self.src.approvers("DATA_OWNER", t), set())
 
-    def test_context_keyed_by_instance(self):
-        self.src.save_context("INC0010100", {"decision": "DENY"})
-        self.src.save_context("INC0010100", {"target": "chatgpt.com"})   # merged, not replaced
-        self.assertEqual(self.src.state.load("https://dev000000.service-now.com|INC0010100"),
-                         {"decision": "DENY", "target": "chatgpt.com"})
+    def test_thread_keyed_by_instance(self):
+        self.assertEqual(self.src.thread_id("INC0010100"), "https://dev000000.service-now.com|INC0010100")
+        self.src.save_context("INC0010100", {"decision": "DENY"})        # no-op: context is in the checkpoint
+        self.sn.update.assert_not_called()
+
+    def test_fetch_stuck_filters_by_age(self):
+        self.sn.query.return_value = [{"sys_id": "S1", "number": "INC1", "sys_updated_on": "2020-01-01 00:00:00"},
+                                      {"sys_id": "S2", "number": "INC2", "sys_updated_on": "2999-01-01 00:00:00"}]
+        self.assertEqual(self.src.fetch_stuck(600), ["INC1"])
+        self.assertEqual(self.sn.query.call_args.args[1], "assignment_group=DESK^state=2")
 
     def test_save_result_writes_trace_message_status(self):
         self.sn.group_members.return_value = [{"sys_id": "U9", "user_name": "security01"}]
         result = {"final_state": "AWAITING_APPROVAL", "user_message": "needs approval",
-                  "notes": [("Understanding Agent", "github.com"), ("Policy & Risk Agent", "ALLOW_WITH_APPROVAL")],
+                  "trace": [{"agent": "Understanding Agent", "output": "github.com", "model": "groq:x",
+                             "latency_s": 0.5}, ("Policy & Risk Agent", "ALLOW_WITH_APPROVAL")],
                   "understanding": {"target": "github.com"},
                   "policy": {"decision": "ALLOW_WITH_APPROVAL", "approver_role": "SECURITY_TEAM"}}
         self.src.save_result("INC0010100", {"requester": "employee01", "requester_manager": "manager01"}, result)
@@ -239,7 +260,7 @@ class ServiceNowMapping(unittest.TestCase):
         self.assertEqual(self.sn.add_work_note.call_count, 1)                 # one trace note per run
         self.sn.add_comment.assert_called_with("incident", "SYS100", "needs approval")
         self.assertEqual(self.sent(), {"state": "3", "approval": "requested"})
-        self.assertEqual(self.src.state.load(self.src._key("INC0010100"))["decision"], "ALLOW_WITH_APPROVAL")
+        self.assertIn("1. [Understanding Agent] github.com | groq:x 0.50s", trace)
 
 
 if __name__ == "__main__":

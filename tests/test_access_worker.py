@@ -3,15 +3,18 @@ extraction) and the endpoint service is faked, so no API key, network or Adminis
 
     python -m unittest tests.test_access_worker -v
 """
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from src.access import agents
+from src.common import llm_router
 from src.access.graph import build_graph
 from src.access.ticket_source import LocalSource
 from src.access.worker import approve_ticket, process_ticket, run_poller
+from src.orchestrator import checkpoint as cp
 
 
 class FakeEndpoint:
@@ -32,9 +35,10 @@ class Flow(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.src = LocalSource(Path(self.tmp.name) / "tickets.db")
-        self.graph = build_graph(None)
+        self.graph = build_graph(None, checkpointer=cp.memory_saver())
         self.ep = FakeEndpoint()
-        for p in (mock.patch.object(agents, "gemini_json", return_value=None),   # LLM off -> rule-based
+        for p in (mock.patch.dict(os.environ, {"LLM_MODE": "off"}),                # LLM off -> rule-based
+                  mock.patch.object(llm_router, "_write_log"),                      # keep logs/ clean
                   mock.patch.object(agents.endpoint_client, "execute", side_effect=lambda *a: self.ep.execute(*a)),
                   mock.patch.object(agents.endpoint_client, "verify", side_effect=lambda *a: self.ep.verify(*a))):
             p.start()
@@ -124,11 +128,11 @@ class Flow(unittest.TestCase):
 
     def test_lost_context_is_rebuilt(self):
         n, _ = self.run_ticket("Requesting access to github.com")
-        self.src.store.update(n, context={})          # e.g. state file deleted
+        cp.delete(self.graph.checkpointer, self.src.thread_id(n))     # e.g. checkpoint file deleted
         ok, why = approve_ticket(self.src, self.graph, n, "security01")
         self.assertTrue(ok, why)
         notes = [x["note"] for x in self.src.get(n)["work_notes"]]
-        self.assertTrue(any("rebuilt" in x for x in notes))
+        self.assertTrue(any("checkpoint of this ticket was missing" in x for x in notes))
         self.assertEqual(self.src.get(n)["state"], "RESOLVED")
 
     def test_pipeline_crash_escalates(self):

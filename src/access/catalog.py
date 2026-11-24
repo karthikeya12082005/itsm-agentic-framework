@@ -23,6 +23,17 @@ TARGETS = {
     "Postman.Postman":            {"kind": "software", "policy_id": "POL-0019", "label": "Postman"},
 }
 
+# Context for the Critic Agent (found live, Nov 24 2026: without it the LLM critic escalated Gemini because
+# POL-0028's SOP action is ADD_GROUP_MEMBERSHIP for the fictional "Orbit Assist" licence group).
+CATALOGUE_NOTE = (
+    "Policy and SOP texts come from a synthetic dataset of the fictional company 'Orbitel Systems' and use "
+    "fictional product names (e.g. 'Orbit Assist' = the approved internal AI assistant, 'ChatNova' = an "
+    "unapproved external AI tool). The organisation's catalogue maps each real target to one of these policies; "
+    "that mapping is authoritative. On this laptop every website target is enforced with ALLOWLIST_DOMAIN (Chrome "
+    "URLAllowlist) and every software target with INSTALL_SOFTWARE (winget); the SOP's action type (e.g. "
+    "ADD_GROUP_MEMBERSHIP for a licence group, GRANT_ACCESS) is the corporate equivalent of that action.")
+ENFORCEMENT = {"domain": "ALLOWLIST_DOMAIN", "software": "INSTALL_SOFTWARE"}
+
 # Approved alternative offered when a request is denied (policy_id -> text)
 ALTERNATIVES = {
     "POL-0030": "Use the approved AI assistant Gemini (gemini.google.com); you can request it through a ticket.",
@@ -36,6 +47,16 @@ SOFTWARE_KEYWORDS = {
     "visual studio code": "Microsoft.VisualStudioCode", "vs code": "Microsoft.VisualStudioCode",
     "vscode": "Microsoft.VisualStudioCode", "git": "Git.Git", "python": "Python.Python.3.12",
     "postman": "Postman.Postman",
+}
+
+# Names people use for managed websites / AI tools (no domain written) -> catalogue key.
+# Matched as whole words, case-insensitive. Fixes "I need ChatGPT to debug my Python code" (TODO 2.4).
+TARGET_ALIASES = {
+    "chatgpt": "chatgpt.com", "chat gpt": "chatgpt.com", "openai": "openai.com", "open ai": "openai.com",
+    "claude": "claude.ai", "perplexity": "perplexity.ai",
+    "gemini": "gemini.google.com", "google gemini": "gemini.google.com",
+    "github": "github.com", "git hub": "github.com", "pypi": "pypi.org", "python package index": "pypi.org",
+    "wetransfer": "wetransfer.com", "we transfer": "wetransfer.com", "mega.nz": "mega.nz",
 }
 
 # Employee directory for the LOCAL ticket source only (tests/offline). With ServiceNow (default) the role is the

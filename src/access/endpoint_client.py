@@ -1,5 +1,11 @@
-"""Client for the endpoint enforcement service (runs as admin on 127.0.0.1:8765)."""
+"""Client for the endpoint enforcement service (runs as admin on 127.0.0.1:8765).
+
+    python -m src.access.endpoint_client status              current allowlist / blocklist / download policy
+    python -m src.access.endpoint_client rollback <action_id> <ticket>   undo one audited action (rollback spec)
+"""
+import json
 import os
+import sys
 
 import requests
 
@@ -35,3 +41,20 @@ def verify(kind, target):
     if kind == "domain":
         return bool(_call("GET", f"/verify/domain/{target}")["allowed"])
     return bool(_call("GET", f"/verify/software/{target}")["installed"])
+
+
+def status():
+    return _call("GET", "/status")
+
+
+def rollback(action_id, ticket_id):
+    return _call("POST", "/actions/rollback", json={"action_id": action_id, "ticket_id": ticket_id})
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["status"]:
+        print(json.dumps(status(), indent=1))
+    elif sys.argv[1:2] == ["rollback"] and len(sys.argv) == 4:
+        print(json.dumps(rollback(sys.argv[2], sys.argv[3]), indent=1))
+    else:
+        print(__doc__)
