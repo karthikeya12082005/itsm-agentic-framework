@@ -100,3 +100,12 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
   refuses to save partial runs.
 - Working style: Claude runs every terminal command itself; the user only does browser/ServiceNow/Admin-terminal
   steps and types secrets into .env (never into chat).
+- 0.6 New HF read token (verified with whoami); HF warning gone.
+- 0.7 ServiceNow dev219979: admin password correct (web login OK) but REST Basic auth 401. Cause: Basic-auth
+  restriction enforced since 2026-11-12 — only users with role `snc_basic_auth_api_access` may use Basic auth on
+  the API (proven by granting admin the role temporarily: 401 -> 200; role removed). Wrote check_sn_auth.py and
+  create_ai_agent.py (admin via web session + X-UserToken). Setting user_password through the Table API is accepted
+  but ineffective on this release (tried full update, password-only update, WSAO flag; background script via
+  sys.scripts.do did not run). Final fix: ai.agent (Internal Integration User; itil, approval_admin,
+  snc_basic_auth_api_access) + password set by hand with Set Password -> Generate -> pasted into .env.
+  check_sn_auth: HTTP 200 twice. Admin password not rotated yet (user's choice) -> reset at the end of 1.2.

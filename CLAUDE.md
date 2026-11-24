@@ -66,8 +66,8 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 - `.env` (NEVER commit, never print values; single-quoted values) has the same 17 keys, in the same order, as the
   committed template `.env.example`. Set so far (Nov 24 2026): DATABASE_URL (rotated), ENDPOINT_URL,
   ENDPOINT_TOKEN (rotated, 40 chars), SERVICENOW_INSTANCE (dev219979), SERVICENOW_USER, GEMINI_API_KEY,
-  GEMINI_MODEL_LITE, GROQ_API_KEY, OLLAMA_BASE_URL. Still empty: SERVICENOW_PASSWORD (0.7), HF_TOKEN (0.6),
-  LLM_* agent map (2.1). Claude checks .env only by key names / lengths / masked shape — never values.
+  GEMINI_MODEL_LITE, GROQ_API_KEY, OLLAMA_BASE_URL, HF_TOKEN (read), SERVICENOW_PASSWORD (ai.agent),
+  SERVICENOW_ADMIN_PASSWORD (temporary, until 1.2). Still empty: LLM_* agent map (2.1). Claude checks .env only by key names / lengths / masked shape — never values.
   Common paste mistakes seen: whole `NAME='…'` line pasted inside the quotes; file not saved (Ctrl+S);
   whole file overwritten instead of one line edited.
 - Ollama: D:\Ollama (ollama.exe not on PATH in old terminals), models in D:\Ollama\models (user env OLLAMA_MODELS),
@@ -95,10 +95,10 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   request_approval, execution, verification, communication), graph.py (LangGraph StateGraph; START routes new /
   resume-approved / resume-rejected), cli.py (new, process [--all], approve [--reject] [--by], show, list, demo,
   --no-retrieval).
-- `src/integrations/` — **EMPTY on disk** (the earlier servicenow_setup.py / check_sn_auth.py / test_servicenow.py
-  were never committed and are lost). To be written for PDI dev219979: check_sn_auth.py (item 0.7),
-  servicenow_client.py (1.1), servicenow_setup.py (1.2: admin via getpass; users, group, roles, the two catalog
-  items, `--test-order`).
+- `src/integrations/` — (the earlier scripts were never committed and were lost; rewritten for dev219979)
+  check_sn_auth.py (REST login test; `--admin`; detects hibernation), create_ai_agent.py (admin web session
+  class `Admin`; creates ai.agent + roles idempotently). To write: servicenow_client.py (1.1),
+  servicenow_setup.py (1.2: users, group, roles, the two catalog items, `--test-order`).
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
 ## Catalogue (src/access/catalog.py)
@@ -130,11 +130,22 @@ Access demo: ChatGPT DENY -> CLOSED_REJECTED; Gemini ALLOW -> RESOLVED (~1 s); G
 approved -> RESOLVED; VS Code install FAILED x2 -> ESCALATED (installer aborts when VS Code is running).
 Chrome must be restarted for employee01 to pick up new policies.
 
+## ServiceNow authentication facts (PDI dev219979, Brazil, verified Nov 24 2026)
+- Basic-auth restriction ENFORCED since 2026-11-12 (`glide.authenticate.basic_auth.restriction.enforce=true`,
+  `allowed_roles=snc_basic_auth_api_access`, `allow_wsao=true`). REST with user/password works ONLY for users
+  holding `snc_basic_auth_api_access` (proven: admin 401 without, 200 with; role removed from admin again).
+  Exception table `sys_user_basic_auth_exception` is empty. API Access Policies for Table GET/POST are inactive.
+- Admin automation therefore uses a WEB session (login.do -> g_ck -> `X-UserToken` header on the Table API):
+  `src/integrations/create_ai_agent.Admin`. Admin never gets the Basic-auth role.
+- Writing `sys_user.user_password` via Table API (also with sysparm_input_display_value=true) is accepted but has
+  NO effect; background script via sys.scripts.do did not execute when posted. Passwords are set by hand in the UI.
+- Login failures are logged: sysevent `login.failed` and syslog "Basic authentication failed for user: X".
+- Instance hibernation shows up as a non-JSON (HTML) answer; `check_sn_auth` reports it.
+
 ## Known issues
 - VS Code installs fail while VS Code is running (installer cancels silently).
 - Approver identity is not checked (manager01 approved a SECURITY_TEAM item).
 - k-NN confidence is low for real AI tool names (dataset uses fictional names) — decisions still correct.
-- HF Hub "unauthenticated requests" warning (set HF_TOKEN).
 
 ---------------------------------------------------------------------------------------------------------------
 # MASTER TODO LIST (the project must work perfectly end to end)
@@ -160,9 +171,12 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       after install crashed once with a CUDA v13 init error (0xc0000409, ggml_cuda_kernel_can_use_pdl); not
       reproducible on two cold reloads. If it recurs: set user env OLLAMA_LLM_LIBRARY=cuda_v12 and restart Ollama.
       Only ~0.8 GB RAM was free during load — keep Ollama optional, never the only provider.)
-- [ ] 0.6 HF_TOKEN (read-only) to remove the HF warning. Test: no warning on eval_retrieval.
-- [ ] 0.7 ServiceNow PDI (dev219979) awake and reachable; create ai.agent on the new instance; write
+- [x] 0.6 HF_TOKEN (read-only) to remove the HF warning. Test: no warning on eval_retrieval.
+      (Verified: whoami -> role read; `eval_retrieval --limit 3` prints no HF warning.)
+- [x] 0.7 ServiceNow PDI (dev219979) awake and reachable; create ai.agent on the new instance; write
       `src/integrations/check_sn_auth.py` (missing). Test: `python -m src.integrations.check_sn_auth` = 200.
+      (Verified twice: HTTP 200, roles incl. itil, approval_admin, snc_basic_auth_api_access. See "ServiceNow
+      authentication facts" below — Basic-auth restriction and API password setting do not work.)
 - [ ] 0.8 `.gitignore` contains .env, data/tickets.db, checkpoint DBs, logs, audit jsonl. `pip install -r requirements.txt` clean.
 
 ## Phase 1 — ServiceNow integration (REQUIRED)
@@ -170,6 +184,9 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       add work note, add comment, set state, query approvals. Unit test with a mocked session + live smoke test.
 - [ ] 1.2 Run servicenow_setup.py: users (employee01, manager01, ai.agent), group "IT Security"/SECURITY_TEAM and
       line manager mapping, catalog items "Request website or AI tool access" and "Request software installation".
+      Reuse `create_ai_agent.Admin` (admin web session). Human users' passwords: set by hand (Set Password).
+      LAST STEP: user resets the PDI admin password (old one is exposed in a chat screenshot) and Claude clears
+      SERVICENOW_ADMIN_PASSWORD from .env; re-check `check_sn_auth --admin` fails / `check_sn_auth` still 200.
 - [ ] 1.3 Ticket source abstraction: `TicketSource` interface with `ServiceNowSource` (default) and `LocalSource`
       (SQLite, tests only). Agents never call ServiceNow directly.
 - [ ] 1.4 Poller/worker: picks up new RITMs (and later INCs), maps variables -> agent state, runs the graph,
@@ -249,7 +266,7 @@ user sees, ask for a screenshot and adapt.
 | OLLAMA_BASE_URL | local Ollama | install from ollama.com (Windows installer), then `ollama pull <small model>`; value `'http://localhost:11434'` |
 | HF_TOKEN | Hugging Face (read) | huggingface.co -> Settings -> Access Tokens -> Create new token -> type Read |
 | SERVICENOW_INSTANCE | PDI URL | developer.servicenow.com -> My Instance (wake it if hibernating) -> `'https://devXXXXXX.service-now.com'` |
-| SERVICENOW_USER / SERVICENOW_PASSWORD | integration user | in PDI: sys_user_list.do -> ai.agent -> Set Password (24-char alphanumeric) -> Save |
+| SERVICENOW_USER / SERVICENOW_PASSWORD | integration user | `python -m src.integrations.create_ai_agent` creates ai.agent + roles; then in PDI open the printed sys_user link -> Set Password -> Generate (no `'` in it) -> copy -> Save Password -> paste between the quotes in .env (generated passwords are 100 chars with symbols; fine when single-quoted) |
 | SERVICENOW_ADMIN_PASSWORD | only for setup scripts | developer portal -> My Instance -> Manage instance password; remove from .env after setup |
 | LLM_UNDERSTANDING / LLM_RETRIEVAL / LLM_RCA / LLM_CRITIC / LLM_COMMUNICATION | per-agent model, format `provider:model` | choose from the providers' current model lists (verify IDs with check_llms.py) |
 
