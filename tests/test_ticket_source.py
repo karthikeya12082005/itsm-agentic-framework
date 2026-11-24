@@ -144,9 +144,9 @@ class ServiceNowMapping(unittest.TestCase):
                                           description="need github.com for reviews")
         self.sn.get_journal.return_value = [  # newest first, as ServiceNow returns it
             {"created_on": "2026-11-24 10:00:02", "author": "AI Agent", "kind": "Work notes",
-             "value": "[Policy & Risk Agent] ALLOW_WITH_APPROVAL"},
+             "value": "[#2 Policy & Risk Agent] ALLOW_WITH_APPROVAL"},
             {"created_on": "2026-11-24 10:00:01", "author": "AI Agent", "kind": "Work notes",
-             "value": "[Understanding Agent] target=github.com\nsecond line"},
+             "value": "[#1 Understanding Agent] target=github.com\nsecond line"},
             {"created_on": "2026-11-24 10:00:00", "author": "Some Human", "kind": "Work notes", "value": "hand note"}]
         self.src.save_context("INC0010100", {"decision": "ALLOW_WITH_APPROVAL", "target": "github.com"})
         t = self.src.get("INC0010100")
@@ -157,6 +157,29 @@ class ServiceNowMapping(unittest.TestCase):
         self.assertEqual([(n["agent"], n["note"]) for n in t["work_notes"]],
                          [("Some Human", "hand note"), ("Understanding Agent", "target=github.com\nsecond line"),
                           ("Policy & Risk Agent", "ALLOW_WITH_APPROVAL")])
+
+    def test_same_second_notes_ordered_by_sequence_and_trace_split(self):
+        # live bug: notes written within one second came back as Policy before Understanding
+        t = "2026-11-24 10:00:05"
+        entries = [
+            {"created_on": t, "author": "AI Agent", "value": "[#3 Approval Guard] manager01 REFUSED"},
+            {"created_on": t, "author": "AI Agent", "value": "[#1 Orchestrator] picked up"},
+            {"created_on": t, "author": "AI Agent", "value": "[#2 Agent trace]\n1. [Understanding Agent] target=x\n"
+                                                          "2. [Retrieval Agent] SOP-0025\n3. [Policy & Risk Agent] AWA"}]
+        from src.access.ticket_source import parse_work_notes
+        self.assertEqual([n["agent"] for n in parse_work_notes(entries)],
+                         ["Orchestrator", "Understanding Agent", "Retrieval Agent", "Policy & Risk Agent",
+                          "Approval Guard"])
+        self.assertEqual(parse_work_notes(entries)[1]["note"], "target=x")
+
+    def test_trace_is_one_note_with_numbered_steps(self):
+        self.src.add_trace("INC0010100", [("Understanding Agent", "a"), ("Policy & Risk Agent", "b")])
+        text = self.sn.add_work_note.call_args.args[2]
+        self.assertEqual(text, "[#1 Agent trace] \n1. [Understanding Agent] a\n2. [Policy & Risk Agent] b")
+        self.src.add_note("INC0010100", "Approval Guard", "c")
+        self.assertTrue(self.sn.add_work_note.call_args.args[2].startswith("[#2 Approval Guard]"))
+        self.src.add_trace("INC0010100", [])   # nothing to write
+        self.assertEqual(self.sn.add_work_note.call_count, 2)
 
     def test_ui_ticket_with_two_texts(self):
         self.sn.get.return_value = record(short_description="GitHub please", description="for code reviews")
@@ -182,7 +205,7 @@ class ServiceNowMapping(unittest.TestCase):
 
     def test_notes_comments_approval(self):
         self.src.add_note("INC0010100", "Execution Agent", "attempt 1 ok")
-        self.sn.add_work_note.assert_called_with("incident", "SYS100", "[Execution Agent] attempt 1 ok")
+        self.sn.add_work_note.assert_called_with("incident", "SYS100", "[#1 Execution Agent] attempt 1 ok")
         self.src.add_comment("INC0010100", "Done")
         self.sn.add_comment.assert_called_with("incident", "SYS100", "Done")
         self.src.record_approval("INC0010100", False, "security01", "SECURITY_TEAM")
@@ -203,6 +226,20 @@ class ServiceNowMapping(unittest.TestCase):
         self.src.save_context("INC0010100", {"target": "chatgpt.com"})   # merged, not replaced
         self.assertEqual(self.src.state.load("https://dev000000.service-now.com|INC0010100"),
                          {"decision": "DENY", "target": "chatgpt.com"})
+
+    def test_save_result_writes_trace_message_status(self):
+        self.sn.group_members.return_value = [{"sys_id": "U9", "user_name": "security01"}]
+        result = {"final_state": "AWAITING_APPROVAL", "user_message": "needs approval",
+                  "notes": [("Understanding Agent", "github.com"), ("Policy & Risk Agent", "ALLOW_WITH_APPROVAL")],
+                  "understanding": {"target": "github.com"},
+                  "policy": {"decision": "ALLOW_WITH_APPROVAL", "approver_role": "SECURITY_TEAM"}}
+        self.src.save_result("INC0010100", {"requester": "employee01", "requester_manager": "manager01"}, result)
+        trace = self.sn.add_work_note.call_args.args[2]
+        self.assertIn("3. [Policy & Risk Agent] waiting for approval by SECURITY_TEAM: security01", trace)
+        self.assertEqual(self.sn.add_work_note.call_count, 1)                 # one trace note per run
+        self.sn.add_comment.assert_called_with("incident", "SYS100", "needs approval")
+        self.assertEqual(self.sent(), {"state": "3", "approval": "requested"})
+        self.assertEqual(self.src.state.load(self.src._key("INC0010100"))["decision"], "ALLOW_WITH_APPROVAL")
 
 
 if __name__ == "__main__":

@@ -94,6 +94,11 @@ class TicketSource(ABC):
     def link(self, number: str) -> str:
         return ""
 
+    def add_trace(self, number: str, steps: list[tuple[str, str]]) -> None:
+        """All agent steps of one graph run, in execution order (default: one note per step)."""
+        for agent, note in steps:
+            self.add_note(number, agent, note)
+
     # ------------------------------------------------------------------ shared logic
     def may_approve(self, user: str, role: str | None, ticket: dict) -> tuple[bool, str]:
         """Approver check done in code (1.5): (allowed?, reason)."""
@@ -107,22 +112,22 @@ class TicketSource(ABC):
         return False, f"{user} is not {role} (allowed: {', '.join(sorted(allowed)) or 'nobody'})"
 
     def save_result(self, number: str, ticket: dict, result: dict) -> None:
-        """Write one graph run back: every agent note, the structured context, the message, the status."""
-        for agent, note in result.get("notes", []):
-            self.add_note(number, agent, note)
+        """Write one graph run back: every agent step (trace), the structured context, the message, the status."""
+        steps = list(result.get("notes", []))
         final = result["final_state"]
         u, p = result.get("understanding") or {}, result.get("policy") or {}
+        if final == "AWAITING_APPROVAL":
+            role = p.get("approver_role")
+            who = ", ".join(sorted(self.approvers(role, ticket))) or "nobody is configured for this role"
+            steps.append(("Policy & Risk Agent",
+                          f"waiting for approval by {role}: {who}. "
+                          f"Approve: python -m src.access.cli approve {number} --by <user> [--reject]"))
+        self.add_trace(number, steps)
         self.save_context(number, {
             "final_state": final, "decision": p.get("decision"), "target": u.get("target"),
             "policy_id": u.get("policy_id"), "sop_id": u.get("sop_id"),
             "approval_status": result.get("approval_status"), "user_message": result.get("user_message"),
             "context": {k: result.get(k) for k in CONTEXT_KEYS}})
-        if final == "AWAITING_APPROVAL":
-            role = p.get("approver_role")
-            who = ", ".join(sorted(self.approvers(role, ticket))) or "nobody is configured for this role"
-            self.add_note(number, "Policy & Risk Agent",
-                          f"waiting for approval by {role}: {who}. "
-                          f"Approve: python -m src.access.cli approve {number} --by <user> [--reject]")
         if result.get("user_message"):
             self.add_comment(number, result["user_message"])
         self.set_status(number, final, reason=result.get("user_message") or final)
@@ -196,7 +201,30 @@ ACCESS_CATEGORY = "access"
 SN_FIELDS = ("sys_id,number,short_description,description,state,approval,assignment_group,caller_id,"
              "caller_id.user_name,caller_id.title,caller_id.manager.user_name,sys_created_on,resolved_at")
 SN_APPROVAL = {"requested": "PENDING", "approved": "APPROVED", "rejected": "REJECTED"}
-_NOTE = re.compile(r"^\[([^\]\n]+)\]\s*(.*)$", re.S)
+# Our work notes: "[#<seq> <agent>] text". ServiceNow journal timestamps have 1-second resolution, so notes
+# written within the same second come back in arbitrary order (seen live: Policy before Understanding);
+# the per-ticket sequence number restores the true order. One graph run = one "Agent trace" note whose
+# lines "<i>. [<agent>] <text>" are the steps in execution order.
+_NOTE = re.compile(r"^\[(?:#(\d+) )?([^\]\n]+)\]\s*(.*)$", re.S)
+_STEP = re.compile(r"^\d+\. \[([^\]\n]+)\] ", re.M)
+TRACE = "Agent trace"
+
+
+def parse_work_notes(entries: list[dict]) -> list[dict]:
+    """Journal entries (any order) -> [{time, agent, note}] in true order; trace notes split into steps."""
+    rows = []
+    for e in entries:
+        m = _NOTE.match(e["value"])
+        seq, agent, body = (int(m.group(1) or 0), m.group(2), m.group(3)) if m else (0, e["author"], e["value"])
+        if agent == TRACE:
+            heads = list(_STEP.finditer(body))
+            for i, h in enumerate(heads):
+                end = heads[i + 1].start() if i + 1 < len(heads) else len(body)
+                rows.append(((e["created_on"], seq, i), {"time": e["created_on"], "agent": h.group(1),
+                                                         "note": body[h.end():end].strip()}))
+        else:
+            rows.append(((e["created_on"], seq, 0), {"time": e["created_on"], "agent": agent, "note": body}))
+    return [r for _, r in sorted(rows, key=lambda x: x[0])]
 
 
 class AgentStateStore:
@@ -296,11 +324,7 @@ class ServiceNowSource(TicketSource):
         short, desc = (r.get("short_description") or "").strip(), (r.get("description") or "").strip()
         head = short[:-3] if short.endswith("...") else short
         text = desc if desc and desc.startswith(head) else "\n".join(x for x in (short, desc) if x)
-        notes = []
-        for e in reversed(self.sn.get_journal("incident", sid, "work_notes")):  # chronological
-            m = _NOTE.match(e["value"])
-            notes.append({"time": e["created_on"], "agent": m.group(1) if m else e["author"],
-                          "note": m.group(2) if m else e["value"]})
+        notes = parse_work_notes(self.sn.get_journal("incident", sid, "work_notes"))
         return {"number": number, "sys_id": sid, "requester": r.get("caller_id.user_name", ""),
                 "requester_role": r.get("caller_id.title") or "EMPLOYEE",
                 "requester_manager": r.get("caller_id.manager.user_name") or "",
@@ -331,14 +355,25 @@ class ServiceNowSource(TicketSource):
             self._cache[f"inc:{r['number']}"] = r["sys_id"]
         return [r["number"] for r in rows]
 
+    def _tag(self, number, agent):
+        """'[#<seq> <agent>]' with a per-ticket sequence number (true order despite 1-s timestamps)."""
+        seq = self.state.load(self._key(number)).get("note_seq", 0) + 1
+        self.state.save(self._key(number), {"note_seq": seq})
+        return f"[#{seq} {agent}]"
+
     def acknowledge(self, number):
         self.sn.update("incident", self._sys_id(number), {
             "state": "2", "assigned_to": self._user(self.sn.user),
-            "work_notes": "[Orchestrator] picked up by the multi-agent framework"}, fields="sys_id")
+            "work_notes": f"{self._tag(number, 'Orchestrator')} picked up by the multi-agent framework"},
+            fields="sys_id")
         self.state.save(self._key(number), {"acknowledged_at": now()})
 
     def add_note(self, number, agent, text):
-        self.sn.add_work_note("incident", self._sys_id(number), f"[{agent}] {text}")
+        self.sn.add_work_note("incident", self._sys_id(number), f"{self._tag(number, agent)} {text}")
+
+    def add_trace(self, number, steps):
+        if steps:
+            self.add_note(number, TRACE, "\n" + "\n".join(f"{i}. [{a}] {n}" for i, (a, n) in enumerate(steps, 1)))
 
     def add_comment(self, number, text):
         self.sn.add_comment("incident", self._sys_id(number), text)
@@ -361,8 +396,8 @@ class ServiceNowSource(TicketSource):
     def record_approval(self, number, approved, approver, role):
         verb = "approved" if approved else "rejected"
         self.sn.set_task_approval("incident", self._sys_id(number), verb,
-                                  f"[Approval] {approver} ({role}) {verb} the request via the agent CLI "
-                                  f"(approver checked against ServiceNow; recorded by {self.sn.user})")
+                                  f"{self._tag(number, 'Approval')} {approver} ({role}) {verb} the request via "
+                                  f"the agent CLI (approver checked against ServiceNow; recorded by {self.sn.user})")
 
     def save_context(self, number, data):
         self.state.save(self._key(number), data)

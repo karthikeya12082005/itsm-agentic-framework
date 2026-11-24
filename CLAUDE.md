@@ -244,10 +244,14 @@ Never mark an item done on assumptions. Keep this list updated (add items you di
       (Nov 24 2026: src/access/ticket_source.py; neutral statuses mapped to incident state/approval/close code;
       65 unit tests OK (tests/test_ticket_source.py, tests/test_access_worker.py); live `selftest` OK
       (INC0010008 approval -> RESOLVED, INC0010009 ESCALATED, INC0010010 CLOSED_REJECTED).)
-- [ ] 1.4 Poller/worker: picks up new incidents (category access, assignment group AI Service Desk, state New),
+- [x] 1.4 Poller/worker: picks up new incidents (category access, assignment group AI Service Desk, state New),
       maps caller (role = title, manager) + free text -> agent state, runs the graph, writes every agent step as
       a work note, final message as a customer-visible comment, sets incident state (In Progress / On Hold =
       awaiting approval / Resolved / Canceled for DENY; close notes say why).
+      (Nov 24 2026: `cli worker --once` on PDI: INC0010019 ChatGPT DENY -> Canceled; INC0010020 notion.so ->
+      ESCALATED to "Service Desk"; INC0010021 Postman -> On Hold, approval requested, approver manager01 named.
+      Live bug fixed: same-second work notes came back out of order -> one numbered "Agent trace" note per run
+      + per-ticket note sequence "[#n agent]". First ticket of a run takes ~45 s (slow Gemini call) -> 2.1.)
 - [ ] 1.5 Approvals recorded in ServiceNow: on ALLOW_WITH_APPROVAL set incident approval=requested + On Hold +
       work note naming who may approve (LINE_MANAGER -> caller's manager, SECURITY_TEAM -> IT Security member);
       `cli approve <INC> --by <user> [--reject]` checks the user against ServiceNow (wrong person -> refused,
