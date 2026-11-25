@@ -128,6 +128,19 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 - `src/incident/` (Phase 4) — agents.py (incident nodes + route), rca.py, bayes.py, evidence.py, tools.py.
 - `src/lab/` (Phase 4) — config.py (SERVICES, thresholds, FAULTS ground truth), service.py, supervisor.py,
   faults.py, actions.py (remediation action catalogue + audit data/lab/audit.jsonl + rollback).
+- `src/dashboard/` (5.2) — app.py: read-only FastAPI dashboard (`python -m src.dashboard [--source local]
+  [--port 8800]`, 127.0.0.1 only): overview (system status ServiceNow / endpoint / lab, tickets incl. monitoring
+  incidents), /ticket/<INC> (route, trace, policy, critic, RCA ranking + LLM hypotheses, plans, execution, notes),
+  /metrics (evaluation/results/*.md rendered), /llm (chains, per-model latency/failures), /api/*. One lock around
+  source/checkpoint access (TicketStore opens SQLite with check_same_thread=False).
+- `src/common/llm_stats.py` — log_records / llm_usage (primary / secondary / rule-based per agent; LLM-off calls
+  not counted) / provider_latency (per attempt: called, answered, median / p90, failure classes).
+- `evaluation/ablations.py` (5.1) — variants rules, rules-noret, multi, multi-noret, single (--single); parts
+  access / incident / rewrite / latency; LLM answered share per run from the call log; `--report`.
+- `scripts/demo.py` + `demo_access.ps1`, `demo_incident.ps1`, `reset_demo.ps1` (5.3) — demos run the real CLI
+  commands (echoed); reset = lab healthy, dry-run list of active endpoint grants (`-Apply` rolls back through the
+  service), open agent tickets (`-CancelOpen`).
+- `README.md` — setup, architecture (mermaid), run steps, results.
 - `tests/` — stdlib unittest (no pytest): `python -m unittest discover -s tests -t . -v`.
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
@@ -148,6 +161,11 @@ python -m src.access.cli new "<text>" | worker [--once] | process --all | approv
 python -m src.access.cli --source local demo      # offline SQLite desk
 python -m src.access.cli --rules-only ...         # no LLM; --llm-single groq:openai/gpt-oss-20b = one model for all agents
 python -m src.common.check_llms --agents          # per-agent model chain check
+python -m src.dashboard [--source local]          # read-only dashboard http://127.0.0.1:8800
+powershell -ExecutionPolicy Bypass -File scripts\demo_access.ps1 [-AutoApprove] [-Local] [-RulesOnly]
+powershell -ExecutionPolicy Bypass -File scripts\demo_incident.ps1 [-Fault bad_config] [-AutoApprove]
+powershell -ExecutionPolicy Bypass -File scripts\reset_demo.ps1 [-Apply] [-CancelOpen]
+python -m evaluation.ablations --part access incident rewrite latency [--variants ...] | --report
 python -m src.access.endpoint_client status       # endpoint allowlist/blocklist; rollback <action_id> <ticket>
 python scripts/check_staged_secrets.py            # before every commit
 python -m unittest discover -s tests -t .         # all unit tests (offline)
@@ -514,7 +532,12 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
 
 ## Phase 5 — Final evaluation, UI and demo
 - [ ] 5.1 Ablations: single LLM vs multi-LLM; with vs without retrieval; rules-only vs agentic; per-provider latency.
-- [ ] 5.2 Simple dashboard (Streamlit or FastAPI page) showing tickets, agent trace, metrics.
+- [x] 5.2 Simple dashboard (Streamlit or FastAPI page) showing tickets, agent trace, metrics.
+      (FastAPI, no new dependency (Streamlit too heavy for 7.6 GB RAM); read-only by design (approvals stay in the
+      CLI). Live Nov 25 2026 on ServiceNow: /, /ticket/INC0010049, /ticket/INC0010052, /metrics, /llm all 200;
+      screenshots checked (status = dot + icon + label, dark/light tokens). Found on the way: ServiceNowSource.list
+      showed access incidents only (^OR binds to the previous condition) -> lists everything the agents created
+      or own, with category. tests/test_dashboard.py 5 tests (escaping, 404, local desk).)
 - [ ] 5.3 One-command demo scripts (`scripts/demo_access.ps1`, `scripts/demo_incident.ps1`) + reset script.
 - [ ] 5.4 README with setup, architecture diagram, run steps; update CLAUDE.md and docs/PROJECT_HISTORY.md.
       Include `python -m src.knowledge.prepare` (data/processed is gitignored but agents.py loads it at import).

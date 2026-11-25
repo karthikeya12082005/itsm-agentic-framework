@@ -16,7 +16,8 @@ def now():
 class TicketStore:
     def __init__(self, path=DB_PATH):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
+        # check_same_thread=False: the dashboard reads from a web-server thread; callers serialise access
+        self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("""CREATE TABLE IF NOT EXISTS tickets (
             number TEXT PRIMARY KEY, requester TEXT NOT NULL, description TEXT NOT NULL,
@@ -64,5 +65,5 @@ class TicketStore:
 
     def list(self, limit=20):
         return [dict(r) for r in self.db.execute(
-            "SELECT number, requester, state, decision, target, created_at, resolved_at FROM tickets "
+            "SELECT number, requester, category, state, decision, target, created_at, resolved_at FROM tickets "
             "ORDER BY number DESC LIMIT ?", (limit,))]
