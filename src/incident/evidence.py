@@ -53,7 +53,9 @@ def features(obs: dict, root: str, affected: str | None) -> dict[str, bool]:
         "high_latency": (m.get("latency_ms") or 0) > C.LATENCY_MS_MAX,
         "cache_bloated": (m.get("cache_items") or 0) > 5000,
         "disk_full": (disk.get("used_pct") if disk else m.get("disk_used_pct") or 0) > C.DISK_PCT_MAX,
-        "recent_deployment": len(dep.get("releases") or []) > 1 and (dep.get("last_deploy_minutes_ago") or 1e9) < 240,
+        # explicit None check: a deployment 0.0 minutes ago is the most recent one, not "missing" (eval bug)
+        "recent_deployment": len(dep.get("releases") or []) > 1 and dep.get("last_deploy_minutes_ago") is not None
+        and dep["last_deploy_minutes_ago"] < 240,
         "cert_expired": cert.get("days_left") is not None and cert["days_left"] < 0,
         "pool_exhausted": (m.get("pool_size") or 0) > 0 and (m.get("pool_in_use") or 0) >= m.get("pool_size"),
         "high_error_rate": (m.get("error_rate") or 0) > C.ERROR_RATE_MAX,

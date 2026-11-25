@@ -20,8 +20,23 @@ CANDIDATES = 50      # depth of each ranked list before fusion
 
 class PgVectorIndex:
     """Dense search inside PostgreSQL: cosine distance operator <=> on HNSW indexes."""
-    def __init__(self, conn):
+    def __init__(self, conn, database_url=None):
         self.conn = conn
+        self.database_url = database_url
+
+    def _execute(self, sql, params):
+        """Neon closes idle SSL connections (seen after ~5 min in a paced evaluation): reconnect once and retry."""
+        try:
+            return self.conn.execute(sql, params).fetchall()
+        except psycopg.OperationalError:
+            if not self.database_url:
+                raise
+            try:
+                self.conn.close()
+            except Exception:  # noqa: BLE001 - the old connection is already broken
+                pass
+            self.conn = psycopg.connect(self.database_url, autocommit=True)
+            return self.conn.execute(sql, params).fetchall()
 
     def search(self, source, qvec_literal, k, filters):
         table, cols = SOURCES[source]
@@ -33,7 +48,7 @@ class PgVectorIndex:
                 where.append(f"{col} = %s"); params.append(val)
         sql = (f"SELECT id, 1 - (embedding <=> %s::vector) AS cos FROM {table} "
                f"{'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY embedding <=> %s::vector LIMIT %s")
-        return [(i, float(c)) for i, c in self.conn.execute(sql, [qvec_literal, *params, qvec_literal, k]).fetchall()]
+        return [(i, float(c)) for i, c in self._execute(sql, [qvec_literal, *params, qvec_literal, k])]
 
 
 def rrf_fuse(ranked_lists, k=RRF_K):
@@ -61,7 +76,7 @@ class HybridRetriever:
             rows = conn.execute(f"SELECT id, document_text, {', '.join(cols)} FROM {table} {where}").fetchall()
             docs[source] = {r[0]: r[1] for r in rows}
             meta[source] = {r[0]: dict(zip(cols, r[2:])) for r in rows}
-        return cls(PgVectorIndex(conn), docs, meta)
+        return cls(PgVectorIndex(conn, database_url), docs, meta)
 
     def _allowed(self, source, filters):
         if not filters:

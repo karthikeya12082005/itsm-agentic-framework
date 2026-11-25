@@ -73,6 +73,19 @@ class RootLocalisation(unittest.TestCase):
         self.assertEqual(evidence.locate_root(bad_release), "orders-api")
 
 
+class EvidenceFeatures(unittest.TestCase):
+    def test_deployment_zero_minutes_ago_counts_as_recent(self):     # 4.6 eval bug: 0.0 was treated as "none"
+        obs = {("recent_deployments", "orders-api"): {"releases": ["1.0.0", "1.1.0"], "last_deploy_minutes_ago": 0.0}}
+        self.assertTrue(evidence.features(obs, "orders-api", "web")["recent_deployment"])
+        obs = {("recent_deployments", "orders-api"): {"releases": ["1.0.0"], "last_deploy_minutes_ago": None}}
+        self.assertFalse(evidence.features(obs, "orders-api", "web")["recent_deployment"])
+
+    def test_oom_line_is_not_also_a_generic_crash(self):
+        obs = {("read_logs", "orders-api"): {"lines": ["ERROR orders-api FATAL: OutOfMemoryError - heap exhausted"]}}
+        f = evidence.features(obs, "orders-api", "web")
+        self.assertEqual((f["oom_in_logs"], f["crash_in_logs"]), (True, False))
+
+
 class FakeLab:
     """Scenario-driven observations; `fixed` flips to healthy after the right action."""
 

@@ -195,7 +195,8 @@ def eval_dataset(retriever, llm_sample: int, llm_test: int, pace: float) -> tupl
                     "nb": bayes.rank(feats, t["category"], likelihood=L),
                     "nb+knn": bayes.rank(feats, t["category"], knn_root_causes=knn, likelihood=L)}
         llm = None
-        if llm_sample and i < llm_test:
+        stride = max(1, len(test) // max(1, llm_test))
+        if llm_sample and i % stride == 0 and i // stride < llm_test:       # evenly spread subset
             llm = _llm_hypothesis(t)
             variants["nb+knn+llm"] = bayes.rank(feats, t["category"], knn_root_causes=knn, llm_hypothesis=llm,
                                                 alpha=alpha, likelihood=L)

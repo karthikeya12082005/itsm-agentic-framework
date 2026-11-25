@@ -1,0 +1,47 @@
+{
+ "lab": {
+  "rules": {
+   "runs": 16,
+   "detected": 16,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 0.875,
+   "rca_top3": 1.0,
+   "action_accuracy": 0.875,
+   "resolution_rate": 0.75,
+   "escalation_rate": 0.25,
+   "approval_rate": 0.375,
+   "mttr_s_mean": 18.8,
+   "mttr_s_median": 13.7,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [
+    "high_latency#1:ESCALATED",
+    "bad_config#1:ESCALATED",
+    "high_latency#2:ESCALATED",
+    "bad_config#2:ESCALATED"
+   ]
+  },
+  "agentic": {
+   "runs": 16,
+   "detected": 16,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 0.812,
+   "rca_top3": 1.0,
+   "action_accuracy": 0.875,
+   "resolution_rate": 0.75,
+   "escalation_rate": 0.25,
+   "approval_rate": 0.312,
+   "mttr_s_mean": 28.8,
+   "mttr_s_median": 25.6,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [
+    "high_latency#1:ESCALATED",
+    "bad_config#1:ESCALATED",
+    "high_latency#2:ESCALATED",
+    "bad_config#2:ESCALATED"
+   ]
+  }
+ },
+ "generated": "2026-11-25T13:49:13"
+}
