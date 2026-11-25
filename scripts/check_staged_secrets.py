@@ -46,7 +46,8 @@ def main():
     files = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=ROOT, capture_output=True,
                            text=True).stdout.split()
     added = "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
-    problems = [f"staged file is a secrets file: {f}" for f in files if Path(f).name == ".env"]
+    problems = [f"staged file is a secrets file: {f}" for f in files if Path(f).name in (".env", "token")
+                or f.startswith(("data/lab/", "data/checkpoints/", "logs/"))]
     problems += [f".env value of {k} appears in the staged diff" for k, v in env_values().items() if v in added]
     problems += [f"{name} pattern in the staged diff" for name, rx in PATTERNS.items() if re.search(rx, added)]
     print(f"scanned {len(files)} staged files, {len(added.splitlines())} added lines")
