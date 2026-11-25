@@ -85,6 +85,9 @@ def approve_ticket(source, graph, number: str, approver: str, approved: bool = T
     cfg = _cfg(source, number)
     snap = graph.get_state(cfg)
     waiting = "await_approval" in (snap.next or ()) and bool(snap.values.get("policy"))
+    if not waiting and t.get("category") not in ("access", "", None):
+        return False, (f"{number} is an incident whose paused agent run (checkpoint) is missing; incident "
+                       "remediations cannot be rebuilt - re-open it as New so the agents diagnose it again")
     ctx = snap.values if waiting else _rebuilt_context(source, t, retriever)
     if ctx["policy"].get("decision") != "ALLOW_WITH_APPROVAL":
         return False, f"{number}: policy decision is {ctx['policy'].get('decision')}, nothing to approve"

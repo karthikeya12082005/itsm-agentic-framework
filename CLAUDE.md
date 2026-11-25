@@ -125,6 +125,9 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   `python -m src.integrations.servicenow_client smoke [--write]`), servicenow_setup.py (1.2, lean design:
   user records, groups IT Security + AI Service Desk, APPROVER_GROUPS map; setup needs admin, `--test` runs
   as ai.agent only).
+- `src/incident/` (Phase 4) — agents.py (incident nodes + route), rca.py, bayes.py, evidence.py, tools.py.
+- `src/lab/` (Phase 4) — config.py (SERVICES, thresholds, FAULTS ground truth), service.py, supervisor.py,
+  faults.py, actions.py (remediation action catalogue + audit data/lab/audit.jsonl + rollback).
 - `tests/` — stdlib unittest (no pytest): `python -m unittest discover -s tests -t . -v`.
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
@@ -176,6 +179,15 @@ Phase 3 evaluation (evaluation/results/access_eval_summary.md, Nov 25 2026):
   the critic's stricter-rule-reading check escalates - intended), automation 0.846 / 0.827, escalation
   0.135 / 0.154, approval 0.288 / 0.288, verification 1.0 / 1.0, MTTR 0.43 s / 4.35 s, agentic fallbacks 30.6 %
   all to the secondary provider (Gemini 429 quota), 0 rule-based.
+Phase 4 evaluation (evaluation/results/incident_eval_summary.md, Nov 25 2026):
+- Lab, 8 injected faults x 2 reps (rules / agentic): root service 1.0 / 1.0, RCA top-1 1.0 / 0.938, top-3
+  1.0 / 1.0, remediation action 1.0 / 1.0, resolution 1.0 / 1.0, escalation 0 / 0, approval 0.5 / 0.438,
+  MTTR mean 18.4 s / 25.8 s (median 13.7 / 20.8), rollbacks 0, lab healthy after every RESOLVED. Agentic run:
+  RCA LLM answered 11/20, critic LLM 9/17 (rest rule-based fallback: Groq 429 long Retry-After, Gemini 503/429).
+- Dataset test incidents (194), top-1 / top-3: prior 0.196 / 0.521, naive Bayes (learned text likelihoods)
+  0.268 / 0.588, + k-NN 0.263 / 0.598, + LLM (60) 0.283 / 0.633; k-NN majority top-1 0.325, LLM alone 0.255,
+  alpha calibrated on train = 0.267.
+- Live ServiceNow: INC0010049 (CAB approval -> rollback deployment -> Resolved), INC0010052/53 auto-Resolved.
 Root cause of the old slow first ticket: ~20 s lazy load of the embedding model inside the first k-NN lookup
 (+ Gemini timeouts) -> model loaded at worker start (17 s) + LLM warm-up puts down models in cooldown.
 
@@ -220,8 +232,16 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   warm-up handle it; the critic then runs on groq gpt-oss-120b.
 - Gemini free tier: 429 quota on gemini-3.5-flash and -flash-lite during long batch runs (Nov 25 2026) ->
   critic and retrieval rewrite move to Groq (router secondary); evaluations pace tickets (--pace 5).
+- Groq free tier (headers checked Nov 25 2026): per model 1000 requests/DAY and only 8000 tokens/MINUTE; a ReAct
+  RCA prompt is ~1.5-2k tokens -> ~4 calls/min. Router (Nov 25): a 429 with Retry-After <= 20 s waits and retries
+  the same model once; otherwise the model cools exactly Retry-After (no escalation). Batch evaluations must pace
+  (eval_incident --pace 8 dataset / 20 lab). A first unpaced incident eval run was stopped because half of its LLM
+  calls were skipped (cooldowns) - its numbers were not used.
 - Groq free tier rate-limits gpt-oss-120b (HTTP 429 after ~4 critic calls within a minute, ~1.2k tokens each).
   Batch evaluation (3.5 / 5.1) must pace calls or accept fallbacks; the router logs every fallback.
+  After ~90 RCA calls in one session gpt-oss-120b answered 429 with ~6-7 min Retry-After (longer-window quota):
+  run LLM-heavy evaluations one at a time and count LLM vs fallback calls from logs/llm_calls.jsonl.
+- logs/llm_calls.jsonl truncates provider error texts (the exact Groq limit name is not kept).
 - Phase-1 tickets (INC0010001-24) have no checkpoint: `list`/`show` show decision/target as None for them.
   data/agent_state.db is unused since 2.8 (gitignored; can be deleted by the user).
 - Test incidents INC0010025-40 (selftest, live runs, sweep test) remain on the PDI, all closed or escalated.
@@ -440,18 +460,57 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
 **Phase 3 COMPLETE (Nov 25 2026)** — branch phase-3-hardening merged into main.
 
 ## Phase 4 — Objective 3: incident resolution on simulated services
-- [ ] 4.1 Simulated services (e.g. FastAPI web app, worker queue, Postgres/SQLite DB, cache) with health
+- [x] 4.1 Simulated services (e.g. FastAPI web app, worker queue, Postgres/SQLite DB, cache) with health
       endpoints, metrics and logs, run locally (docker optional; must work on Windows Home without admin).
-- [ ] 4.2 Fault injector: service down, high latency, memory leak, disk full (simulated), bad config, expired
+      (src/lab: web 9101 -> orders-api 9102 (config release, DB connection pool) -> cache 9103; worker 9104 (spool
+      dir). One FastAPI app per process (`python -m src.lab.service <name>`), GET /health /metrics /logs, POST
+      /work; admin endpoints behind a random token in data/lab/token. `python -m src.lab.supervisor
+      start|stop|status|restart|reset` (plain processes, PIDs in data/lab/pids.json, no admin, no Docker).)
+- [x] 4.2 Fault injector: service down, high latency, memory leak, disk full (simulated), bad config, expired
       certificate (simulated), DB connection pool exhausted — each mapped to dataset root_cause_category and SOP.
-- [ ] 4.3 Monitoring -> auto-create ServiceNow INCIDENT with symptoms/observed state/diagnostic data.
-- [ ] 4.4 RCA Agent: ReAct diagnosis loop with tools (check health, read logs, read metrics) + LLM hypotheses +
+      (`python -m src.lab.faults list|inject <fault>|clear`; 8 faults incl. dependency_down, ground truth in
+      src/lab/config.FAULTS (eval only). Live Nov 25 2026: every fault injected -> symptom on /health -> its
+      catalogue action (src/lab/actions.py, audited, rollback specs) -> all services healthy again. Symptoms
+      spread like real ones (cache bloat -> latency on web, orders-api AND cache). tests/test_lab.py 9 tests.)
+- [x] 4.3 Monitoring -> auto-create ServiceNow INCIDENT with symptoms/observed state/diagnostic data.
+      (src/lab/monitor.py `--once | --interval 15`: synthetic transactions + /health of all services; failing
+      services grouped into INDEPENDENT events by dependency relation (live finding: two unrelated faults were
+      first merged into one incident -> the fix for one could never verify); one incident per event, reported on
+      the customer-facing service, through TicketSource.create_incident (caller = ai.agent, group AI Service
+      Desk, category from the failing checks only: hardware / database / performance / internal_applications -
+      never access); description = affected service, symptoms, observed state, last log lines; de-duplicated
+      while open (data/lab/monitor_state.json). Live: INC0010049, INC0010052, INC0010053.)
+- [x] 4.4 RCA Agent: ReAct diagnosis loop with tools (check health, read logs, read metrics) + LLM hypotheses +
       Bayesian root-cause ranking (priors from historical_incidents, likelihoods from evidence).
-- [ ] 4.5 Remediation via SOP actions (fixed action catalogue: restart service, rollback config, clear cache,
+      (src/incident: tools.py (9 read-only tools), rca.py (ReAct, LLM_RCA picks one tool per step, max 4, then
+      hypotheses; deterministic evidence completion; category definitions in the prompt), evidence.py (root
+      service by dependency analysis + binary features), bayes.py (prior P(rc | category) from the TRAIN split +
+      k-NN of retrieved similar incidents, likelihood table, LLM top hypothesis as noisy observation alpha 0.6).
+      Live check, 8 faults: rules-only root 8/8, top-1 7/8, top-3 8/8; with the LLM top-1 6/8 (taxonomy framing:
+      leak = "software defect", dependency crash = "software defect") -> alpha to be calibrated in 4.6.
+      Live fixes: OOM log line counted as both crash and OOM (naive-Bayes double count) -> separated.)
+- [x] 4.5 Remediation via SOP actions (fixed action catalogue: restart service, rollback config, clear cache,
       scale worker, rotate cert...), policy check, critic review, execution, predicate verification,
       retry <= 2, rollback on failure, escalate otherwise.
-- [ ] 4.6 Evaluation: RCA top-1/top-3 on injected faults and on dataset test tickets (root_cause_category), MTTR,
+      (src/incident/agents.py nodes in the supervisor graph: triage, incident_retrieve, rca, incident_plan
+      (remediation map root cause + evidence -> SOP -> catalogue action on the root service; dataset policy of
+      the SOP via the rule engine with role SITE_RELIABILITY_ENGINEER; posterior < 0.5 -> ESCALATE),
+      incident_critic (rules + critic LLM; ITIL: restoring service is incident mgmt, code fix = problem mgmt),
+      approval (shared await_approval interrupt; approvers from the new groups), remediate (src/lab/actions.py),
+      incident_verify (root + affected service healthy), incident_rollback, retry with the next plan only if it
+      needs no other approval, then ESCALATED. Live: INC0010049 bad release -> ReAct (4 tools) ->
+      DEPLOYMENT_CHANGE -> POL-0043 needs CAB -> aigov01 REFUSED, cab01 approved -> ROLLBACK_DEPLOYMENT ->
+      verified -> RESOLVED; INC0010052 memory leak -> POL-0046 ALLOW -> restart -> RESOLVED 34 s; INC0010053 disk
+      full -> FREE_DISK_SPACE -> RESOLVED 12.9 s. tests/test_incident.py 11 tests (fake lab).)
+- [x] 4.6 Evaluation: RCA top-1/top-3 on injected faults and on dataset test tickets (root_cause_category), MTTR,
       resolution rate, rollback correctness.
+      (`python -m evaluation.eval_incident [--part lab|dataset] [--pace N] [--report]`; results in
+      evaluation/results/incident_eval_summary.{json,md} + incident_eval_{lab,dataset}.csv. Numbers: see "Results
+      so far". Found and fixed on the way: deployment 0.0 min ago treated as none; resource-exhaustion likelihoods
+      over-penalised absent symptoms; Neon idle-connection drop (reconnect); router honours Retry-After.
+      Rollback correctness: actions.rollback tested in tests/test_lab.py + live in 4.2; 0 rollbacks needed in eval.)
+
+**Phase 4 COMPLETE (Nov 25 2026)** — branch phase-4-incidents merged into main.
 
 ## Phase 5 — Final evaluation, UI and demo
 - [ ] 5.1 Ablations: single LLM vs multi-LLM; with vs without retrieval; rules-only vs agentic; per-provider latency.

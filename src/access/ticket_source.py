@@ -56,6 +56,11 @@ class TicketSource(ABC):
         """Raise a new access ticket for `requester` (user name) with free text. Returns the ticket number."""
 
     @abstractmethod
+    def create_incident(self, short: str, description: str, category: str, impact: int = 2,
+                        urgency: int = 2) -> str:
+        """Raise an incident from monitoring (Phase 4): any category except 'access', assigned to the agents."""
+
+    @abstractmethod
     def get(self, number: str) -> dict:
         """The ticket as a dict (see class doc). KeyError if it does not exist."""
 
@@ -176,12 +181,15 @@ class LocalSource(TicketSource):
     def create(self, requester, text):
         return self.store.create(requester, text)
 
+    def create_incident(self, short, description, category, impact=2, urgency=2):
+        return self.store.create("monitoring", f"{short}\n{description}", category=category)
+
     def get(self, number):
         t = self.store.get(number)
         who = EMPLOYEES.get(t["requester"], {})
         t["requester_role"] = who.get("role", "EMPLOYEE")
         t["requester_manager"] = who.get("manager", "")
-        t["category"] = "access"
+        t["category"] = t.get("category") or "access"
         return t
 
     def fetch_active(self):
@@ -337,6 +345,18 @@ class ServiceNowSource(TicketSource):
             "caller_id": self._user(requester), "category": ACCESS_CATEGORY, "contact_type": "self-service",
             "assignment_group": self._group(AGENT_GROUP), "impact": "3", "urgency": "3",
             "short_description": short, "description": text}, fields="sys_id,number")
+        self._cache[f"inc:{rec['number']}"] = rec["sys_id"]
+        return rec["number"]
+
+    def create_incident(self, short, description, category, impact=2, urgency=2):
+        """Monitoring incident (Phase 4). Caller = the integration user: there is no monitoring user record and
+        the lean design creates no new users for it."""
+        if category == ACCESS_CATEGORY:
+            raise ValueError("monitoring incidents must not use the access category")
+        rec = self.sn.create("incident", {
+            "caller_id": self._user(self.sn.user), "category": category, "assignment_group": self._group(AGENT_GROUP),
+            "impact": str(impact), "urgency": str(urgency), "short_description": short[:160],
+            "description": description[:3900]}, fields="sys_id,number")
         self._cache[f"inc:{rec['number']}"] = rec["sys_id"]
         return rec["number"]
 

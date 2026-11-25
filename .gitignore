@@ -25,3 +25,6 @@ data/checkpoints/
 logs/
 *.log
 endpoint_service/audit/
+
+# Phase 4 lab runtime state (token, pids, audit, service data)
+data/lab/

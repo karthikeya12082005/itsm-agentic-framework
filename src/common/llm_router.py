@@ -49,6 +49,7 @@ DEFAULT_MODELS = {"understanding": "groq:openai/gpt-oss-20b", "retrieval": "gemi
 TIMEOUTS = {"understanding": 8, "retrieval": 6, "rca": 25, "critic": 12, "communication": 8}   # seconds per attempt
 BUDGET_FACTOR = 2.5            # total time for one complete_json call = timeout * factor (then rule-based)
 COOLDOWN_S = 120               # skip a model this long after 429 / 5xx / timeout
+RETRY_WAIT_MAX_S = 20          # a 429 with Retry-After <= this: wait and retry the same model once
 CONFIG_COOLDOWN_S = 900        # ... and this long after 401 / 403 / 404 (bad key, retired model)
 OLLAMA_MIN_TIMEOUT = 30        # a cold Ollama load takes 9-13 s on this laptop
 OLLAMA_DEFAULT = "ollama:llama3.2:3b"
@@ -357,8 +358,8 @@ def complete_json(agent: str, prompt: str, schema: type[BaseModel], *, system: s
         if left:
             res.attempts.append({"spec": spec, "error": f"skipped (cooldown {left:.0f}s)"})
             continue
-        msg = user
-        for repair in (False, True):
+        msg, repair, waited = user, False, False
+        while True:                              # one repair retry (bad JSON) + one rate-limit wait per model
             remaining = budget - (time.perf_counter() - t_start)
             if remaining < 1.0:
                 res.attempts.append({"spec": spec, "error": "call budget exhausted"})
@@ -373,12 +374,22 @@ def complete_json(agent: str, prompt: str, schema: type[BaseModel], *, system: s
             except ProviderError as e:
                 att.update(latency_s=round(time.perf_counter() - t0, 3), error=str(e)[:160])
                 res.attempts.append(att)
+                ra = e.retry_after
+                if e.kind == "transient" and ra is not None and ra <= RETRY_WAIT_MAX_S and not waited \
+                        and budget - (time.perf_counter() - t_start) > ra + 2:
+                    # per-minute token / request limit: the provider says when to retry - wait and retry it
+                    time.sleep(ra + 0.5)
+                    waited = True
+                    continue
                 if e.kind == "transient":
-                    _cool(spec, min(max(e.retry_after or 0, COOLDOWN_S), 600))
+                    if ra is not None:           # short limit window: skip exactly that long, no escalation
+                        _cool(spec, min(ra + 1, 600), grow=False)
+                    else:
+                        _cool(spec, COOLDOWN_S)
                 elif e.kind == "config":
                     _cool(spec, CONFIG_COOLDOWN_S, grow=False)
                 if e.kind == "output" and not repair:
-                    msg = user + "\n\nYour previous answer was not valid JSON. Answer again with ONLY the JSON object."
+                    msg, repair = user + "\n\nYour previous answer was not valid JSON. Answer again with ONLY the JSON object.", True
                     continue
                 break
             except (ValueError, ValidationError) as e:
@@ -389,6 +400,7 @@ def complete_json(agent: str, prompt: str, schema: type[BaseModel], *, system: s
                     msg = (user + f"\n\nYour previous answer was rejected: {err}\n"
                                   f"Previous answer: {str(text)[:500]}\n"
                                   "Answer again with ONLY a JSON object that matches the schema exactly.")
+                    repair = True
                     continue
                 break
             res.attempts.append(att)
