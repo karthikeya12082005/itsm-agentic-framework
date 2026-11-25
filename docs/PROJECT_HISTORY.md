@@ -194,3 +194,47 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
   ticket numbers instead (no need to delete user data).
 - 118 offline tests OK (router 19, multi-agent 30 with a scripted FakeLLM, worker/source updated).
 - **Phase 2 complete.** Next: Phase 3 (process pre-check, rollback correctness, async installs, catalogue, eval).
+
+## 12. Phase 3 — Objective 2 hardening and evaluation (Nov 24-25 2026, branch phase-3-hardening)
+- User decisions: 3.8 = level 1 (data-only catalogue additions); all five missing approver groups created.
+- 3.2: catalog.APPROVER_GROUPS covers every approver role in the dataset (SECURITY_TEAM, IT_SERVICE_OWNER,
+  CHANGE_ADVISORY_BOARD, AI_GOVERNANCE_BOARD, APPLICATION_OWNER, DATA_OWNER; LINE_MANAGER = caller's manager).
+  Admin password put back by the user for one setup run, cleared again by Claude; setup idempotent.
+- Endpoint service v2 (one restart): pure logic in endpoint_service/core.py (unit-tested without admin);
+  pre-check of running processes, installs refused while the app runs, async install jobs, before-state
+  rollback (RESTORE_DOMAIN), uninstall --scope machine, double rollback refused, expires_at + GET /grants,
+  missing managed domains added to the blocklist at start. FastAPI lifespan instead of deprecated on_event.
+- New waiting states in the graph, both LangGraph interrupts resumed by the worker (tend_active each poll):
+  await_job (install running; ticket stays In Progress) and await_user (app open; ticket On Hold / Awaiting
+  Caller; automatic install once closed, closed with "resubmit" after 24 h). The stuck sweep skips them.
+- ServiceNow finding: the On-Hold reason field on this Brazil PDI is `hold_reason` (1 = Awaiting Caller), not
+  the documented `on_hold_reason` - found by reading /api/now/ui/meta/incident before writing it.
+- Live endpoint test `endpoint_service\test_endpoint.py` (rewritten for v2): RESULT OK. Its first run failed
+  on a test bug (authorization_id "T" shorter than the service's 3-character minimum -> 422, correct).
+- Live on ServiceNow (INC0010042-47): VS Code (open) -> On Hold / Awaiting Caller -> time-out -> Canceled with
+  "close it and submit a new request"; 7-Zip -> In Progress (job) -> sweep -> verified -> Resolved -> rollback
+  uninstalled it (verify: not installed); "gemini.google.com for 2 minutes" -> Resolved until ..., expiry
+  sweep revoked it with a note; Hugging Face -> security01 refused, aigov01 approved -> Resolved;
+  qBittorrent and dropbox DENY. Endpoint restored (allowlist [], DownloadRestrictions 3).
+- Durations accept minutes (needed to test expiry live; also good for the demo).
+- 3.5 evaluation (evaluation/eval_access.py, results in evaluation/results/access_eval_summary.{json,md} + CSVs):
+  dataset test split, 77 access/service tickets: rule engine with the ticket's own policy 84.4 % exact match
+  (100 % excluding the 12 ESCALATE labels, all from the dataset scenario "escalated_no_permitted_action");
+  hybrid-retrieved policy Hit@1 68.8 % -> decision exact match 70.1 %. Catalogue requests (52 hand-labelled):
+  rules-only 51/52; agentic first run 50/52, second 49/52 - every agentic mismatch was a critic escalation:
+  * R51 ("client wants ChatGPT but Gemini is fine - enable Gemini"): LLM reads Gemini correctly, the critic's
+    "stricter rule reading" safety check escalates (rules read ChatGPT -> DENY). Kept on purpose (trade-off).
+  * R19 / R52 (time-limited requests): the critic saw no time limit in the plan; for software the plan really
+    could not honour it -> plan facts now state the limit, and time-limited installs were implemented
+    (install job with expires_at; expiry rollback = uninstall).
+  * R17: gpt-oss-120b escalated "for human approval" although approval is already in the plan -> explicit
+    approval_step fact. (gemini-3.5-flash, the critic's primary, was in 429 quota cooldown during the runs.)
+  Caveat for the report: the catalogue set was written together with the rule aliases, so the rules-only score
+  is optimistic; the dataset part is the independent test.
+- After the fixes, final agentic run: 51/52 (only R51), automation 0.827, MTTR 4.35 s; 30.6 % of LLM calls were
+  answered by the secondary provider (Gemini 429 quota -> Groq), none fell back to rules.
+- Time-limited installs live (INC0010048 "7-Zip for 2 minutes"): install job -> Resolved -> expiry sweep
+  uninstalled it (verify: not installed). Endpoint restarted twice by the user in Phase 3 (v2, then installs
+  with expires_at); the running schema was checked via /openapi.json because /health shows the same version.
+- 142 offline tests. Test incidents INC0010041-48 on the PDI (setup test, Phase-3 live run), all closed.
+- **Phase 3 complete.** Next: Phase 4 (simulated services, fault injector, RCA agent, remediation).

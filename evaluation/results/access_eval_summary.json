@@ -1,0 +1,64 @@
+{
+ "dataset": {
+  "tickets": 77,
+  "labels": {
+   "ALLOW_WITH_APPROVAL": 36,
+   "ALLOW": 17,
+   "DENY": 12,
+   "ESCALATE_FOR_REVIEW": 12
+  },
+  "oracle_exact_match": 0.844,
+  "oracle_exact_match_excl_escalate_labels": 1.0,
+  "escalate_label_scenarios": {
+   "escalated_no_permitted_action": 12
+  },
+  "retrieved_policy_hit1": 0.688,
+  "retrieved_exact_match": 0.701,
+  "confusion_oracle": {
+   "ALLOW_WITH_APPROVAL->ALLOW_WITH_APPROVAL": 36,
+   "ALLOW->ALLOW": 17,
+   "DENY->DENY": 12,
+   "ESCALATE_FOR_REVIEW->ALLOW_WITH_APPROVAL": 5,
+   "ESCALATE_FOR_REVIEW->DENY": 7
+  }
+ },
+ "catalogue": {
+  "rules": {
+   "requests": 52,
+   "target_accuracy": 0.981,
+   "decision_exact_match": 0.981,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.846,
+   "escalation_rate": 0.135,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.02,
+   "mttr_s": 0.43,
+   "mean_processing_s": 0.37,
+   "llm_fallback_share": 1.0,
+   "mismatches": [
+    "R51"
+   ],
+   "retrieval": true
+  },
+  "agentic": {
+   "requests": 52,
+   "target_accuracy": 0.981,
+   "decision_exact_match": 0.981,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.827,
+   "escalation_rate": 0.154,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.02,
+   "mttr_s": 4.35,
+   "mean_processing_s": 3.89,
+   "llm_fallback_share": 0.306,
+   "mismatches": [
+    "R51"
+   ],
+   "retrieval": true
+  }
+ },
+ "generated": "2026-11-25T11:54:42"
+}

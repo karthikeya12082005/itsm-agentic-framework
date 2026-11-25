@@ -22,13 +22,19 @@ class FakeEndpoint:
         self.verify_ok = verify_ok
         self.executed = []
 
-    def execute(self, kind, target, ticket_id, authorization_id):
+    def execute(self, kind, target, ticket_id, authorization_id, expires_at=None):
         self.executed.append((kind, target, ticket_id, authorization_id))
         return {"status": "SUCCEEDED", "action": "ALLOWLIST_DOMAIN" if kind == "domain" else "INSTALL_SOFTWARE",
                 "action_id": f"A{len(self.executed)}"}
 
     def verify(self, kind, target):
         return self.verify_ok
+
+    def precheck(self, package_id):
+        return []
+
+    def job(self, action_id):
+        return {"status": "SUCCEEDED"}
 
 
 class Flow(unittest.TestCase):
@@ -39,7 +45,10 @@ class Flow(unittest.TestCase):
         self.ep = FakeEndpoint()
         for p in (mock.patch.dict(os.environ, {"LLM_MODE": "off"}),                # LLM off -> rule-based
                   mock.patch.object(llm_router, "_write_log"),                      # keep logs/ clean
-                  mock.patch.object(agents.endpoint_client, "execute", side_effect=lambda *a: self.ep.execute(*a)),
+                  mock.patch.object(agents.endpoint_client, "execute",
+                                    side_effect=lambda *a, **k: self.ep.execute(*a, **k)),
+                  mock.patch.object(agents.endpoint_client, "precheck", side_effect=lambda *a: self.ep.precheck(*a)),
+                  mock.patch.object(agents.endpoint_client, "job", side_effect=lambda *a: self.ep.job(*a)),
                   mock.patch.object(agents.endpoint_client, "verify", side_effect=lambda *a: self.ep.verify(*a))):
             p.start()
             self.addCleanup(p.stop)

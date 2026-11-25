@@ -16,6 +16,9 @@ shared state. The routing order for an access request:
   ALLOW / ALLOW_WITH_APPROVAL -> critic -> (ESCALATE/BLOCK: communicate)
   ALLOW_WITH_APPROVAL -> request_approval -> await_approval (pause) -> REJECTED: communicate
   -> execute -> verify -> [execute again if FAILED and attempts < MAX_ATTEMPTS] -> communicate -> END
+  install (Phase 3): execute -> RUNNING -> await_job (pause; worker resumes when the job ends) -> verify
+                     app open -> BLOCKED -> request_user_action -> await_user (pause; worker resumes when the
+                     app is closed -> execute, or after 24 h -> communicate "not completed")
 With a checkpointer every step is persisted (thread_id = ticket), so an approval can resume days later.
 """
 from __future__ import annotations
@@ -65,7 +68,14 @@ def route(s: dict) -> str:
             return "await_approval" if status == "PENDING" or s.get("approval") else "request_approval"
     attempts = s.get("attempts", 0)
     ex, ver = s.get("execution") or {}, s.get("verification") or {}
-    if attempts == 0:
+    st = ex.get("status")
+    if st == "RUNNING":                         # install job on the endpoint service (3.7)
+        return "await_job"
+    if st == "BLOCKED":                         # the app is open: ask the employee to close it (3.1)
+        return "await_user" if s.get("final_state") == "WAITING_FOR_USER" else "request_user_action"
+    if st == "ABANDONED":
+        return "communicate"
+    if attempts == 0 or st == "READY":
         return "execute"
     if ver.get("attempt", 0) < ex.get("attempt", 0):
         return "verify"
@@ -109,6 +119,9 @@ def build_graph(retriever=None, checkpointer=None, rewrite_query: bool = True, i
         "request_approval": timed(agents.request_approval),
         "await_approval": timed(agents.await_approval),
         "execute": timed(agents.execution),
+        "await_job": timed(agents.await_job),
+        "request_user_action": timed(agents.request_user_action),
+        "await_user": timed(agents.await_user),
         "verify": timed(agents.verification),
         "communicate": timed(agents.communicate),
         "incident": timed(incident_node or incident_handoff),
@@ -117,6 +130,8 @@ def build_graph(retriever=None, checkpointer=None, rewrite_query: bool = True, i
         g.add_node(name, fn)
         if name == "request_approval":
             g.add_edge(name, "await_approval")
+        elif name == "request_user_action":
+            g.add_edge(name, "await_user")
         else:
             g.add_edge(name, "supervisor")
     g.add_edge(START, "supervisor")

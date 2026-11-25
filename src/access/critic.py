@@ -91,7 +91,13 @@ def plan_facts(state) -> dict:
         "decision": {"decision": p["decision"], "reason": p["reason"], "risk": p.get("risk"),
                      "approver_role": p.get("approver_role")},
         "planned_action": f"{ENFORCEMENT.get(u.get('kind'), '?')} {u['target']}"
-                          + (" after approval" if p["decision"] == "ALLOW_WITH_APPROVAL" else ""),
+                          + (" after approval" if p["decision"] == "ALLOW_WITH_APPROVAL" else "")
+                          + (f"; time-limited to {u['duration_hours']:.3g} h as requested, then automatically "
+                             + ("revoked" if u.get("kind") == "domain" else "uninstalled")
+                             if u.get("duration_hours") else ""),
+        "approval_step": (f"ALREADY PART OF THE PLAN: nothing is executed until {p.get('approver_role')} approves; "
+                          "do not escalate merely because approval is required"
+                          if p["decision"] == "ALLOW_WITH_APPROVAL" else "no approval required by the policy"),
         "catalogue": {"mapping": f"{u['target']} ({u.get('label')}) -> {u.get('policy_id')} / {u.get('sop_id')}",
                       "action_equivalence": f"{u.get('sop_id')} action {sop.get('action_type')} is carried out on "
                                             f"this laptop as {ENFORCEMENT.get(u.get('kind'), '?')} {u['target']} "

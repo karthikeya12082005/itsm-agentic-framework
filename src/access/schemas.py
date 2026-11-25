@@ -14,6 +14,9 @@ class AccessExtraction(BaseModel):
                         description="catalogue value if the request refers to a known target, else the domain or "
                                     "software name exactly as written; empty if nothing is requested")
     justification: str = Field("", max_length=400, description="business reason in one sentence, or empty")
+    duration_hours: float | None = Field(None, ge=0, le=8760,
+                                         description="how long access is needed, in hours, if the employee says "
+                                                     "so (e.g. 'for 2 days' = 48); null if not stated")
 
 
 class QueryRewrite(BaseModel):

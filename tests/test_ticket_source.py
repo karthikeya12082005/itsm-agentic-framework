@@ -59,14 +59,17 @@ class LocalContract(unittest.TestCase):
         t = self.src.get(self.src.create("employee01", "x"))
         self.assertEqual(self.src.approvers("LINE_MANAGER", t), {"manager01"})
         self.assertEqual(self.src.approvers("SECURITY_TEAM", t), {"security01"})
-        self.assertEqual(self.src.approvers("CHANGE_ADVISORY_BOARD", t), set())
+        self.assertEqual(self.src.approvers("CHANGE_ADVISORY_BOARD", t), {"cab01"})     # item 3.2
+        self.assertEqual(self.src.approvers("AI_GOVERNANCE_BOARD", t), {"aigov01"})
+        self.assertEqual(self.src.approvers("NO_SUCH_ROLE", t), set())
         self.assertTrue(self.src.may_approve("security01", "SECURITY_TEAM", t)[0])
         ok, why = self.src.may_approve("manager01", "SECURITY_TEAM", t)
         self.assertFalse(ok)
         self.assertIn("allowed: security01", why)
         self.assertFalse(self.src.may_approve("employee01", "LINE_MANAGER", t)[0])   # self-approval
         self.assertFalse(self.src.may_approve("manager01", None, t)[0])               # no role on decision
-        self.assertFalse(self.src.may_approve("anyone", "CHANGE_ADVISORY_BOARD", t)[0])
+        self.assertFalse(self.src.may_approve("anyone", "NO_SUCH_ROLE", t)[0])
+        self.assertFalse(self.src.may_approve("security01", "CHANGE_ADVISORY_BOARD", t)[0])
 
     def test_factory(self):
         other = get_source("local", path=Path(self.tmp.name) / "x.db")
@@ -234,7 +237,7 @@ class ServiceNowMapping(unittest.TestCase):
         self.assertEqual(self.src.approvers("SECURITY_TEAM", t), {"security01"})
         self.sn.group_members.assert_called_with("IT Security")
         self.assertEqual(self.src.approvers("LINE_MANAGER", t), {"manager01"})
-        self.assertEqual(self.src.approvers("DATA_OWNER", t), set())
+        self.assertEqual(self.src.approvers("NO_SUCH_ROLE", t), set())
 
     def test_thread_keyed_by_instance(self):
         self.assertEqual(self.src.thread_id("INC0010100"), "https://dev000000.service-now.com|INC0010100")
@@ -242,10 +245,22 @@ class ServiceNowMapping(unittest.TestCase):
         self.sn.update.assert_not_called()
 
     def test_fetch_stuck_filters_by_age(self):
-        self.sn.query.return_value = [{"sys_id": "S1", "number": "INC1", "sys_updated_on": "2020-01-01 00:00:00"},
-                                      {"sys_id": "S2", "number": "INC2", "sys_updated_on": "2999-01-01 00:00:00"}]
+        row = {"state": "2", "approval": "not requested", "hold_reason": "", "assignment_group": "DESK"}
+        self.sn.query.return_value = [
+            {**row, "sys_id": "S1", "number": "INC1", "sys_updated_on": "2020-01-01 00:00:00"},
+            {**row, "sys_id": "S2", "number": "INC2", "sys_updated_on": "2999-01-01 00:00:00"},
+            {**row, "sys_id": "S3", "number": "INC3", "sys_updated_on": "2020-01-01 00:00:00", "state": "3",
+             "hold_reason": "1"},                                          # waiting for the employee: not stuck
+            {**row, "sys_id": "S4", "number": "INC4", "sys_updated_on": "2020-01-01 00:00:00", "state": "3",
+             "approval": "requested"}]                                     # waiting for approval: not active
         self.assertEqual(self.src.fetch_stuck(600), ["INC1"])
-        self.assertEqual(self.sn.query.call_args.args[1], "assignment_group=DESK^state=2")
+        self.assertEqual(self.sn.query.call_args.args[1], "assignment_group=DESK^stateIN2,3")
+        self.assertEqual([(t["number"], t["state"]) for t in self.src.fetch_active()],
+                         [("INC1", "IN_PROGRESS"), ("INC2", "IN_PROGRESS"), ("INC3", "WAITING_FOR_USER")])
+
+    def test_waiting_for_user_payload(self):
+        self.src.set_status("INC0010100", "WAITING_FOR_USER")
+        self.assertEqual(self.sent(), {"state": "3", "hold_reason": "1"})
 
     def test_save_result_writes_trace_message_status(self):
         self.sn.group_members.return_value = [{"sys_id": "U9", "user_name": "security01"}]

@@ -8,7 +8,11 @@ $BlockedDomains = @(
     "claude.ai", "perplexity.ai",                         # unapproved external AI  -> DENY
     "gemini.google.com",                                  # approved AI assistant   -> ALLOW via ticket
     "github.com", "pypi.org",                             # allowlist requests      -> APPROVAL via ticket
-    "wetransfer.com", "mega.nz"                           # file sharing            -> DENY
+    "wetransfer.com", "mega.nz",                          # file sharing            -> DENY
+    # added in 3.8 (keep in sync with endpoint_service/endpoint_config.py MANAGED_DOMAINS)
+    "dropbox.com", "deepseek.com", "chat.deepseek.com",   # file sharing / external AI -> DENY
+    "stackoverflow.com", "docs.python.org",               # blocked by filter       -> APPROVAL (IT Security)
+    "huggingface.co", "kaggle.com", "colab.research.google.com"   # AI dev platforms -> APPROVAL (AI Governance)
 )
 
 $sid = (New-Object System.Security.Principal.NTAccount($UserName)).Translate(

@@ -37,6 +37,10 @@ def outcome(state) -> tuple[str, str]:
         return "ESCALATED", p.get("reason", "needs review")
     if c.get("verdict") in ("ESCALATE", "BLOCK"):
         return "ESCALATED", "the plan review found a problem: " + "; ".join(c.get("concerns") or ["see work notes"])[:300]
+    ex = state.get("execution") or {}
+    if ex.get("status") == "ABANDONED":       # item 3.1: the app was never closed - user may resubmit
+        return "CLOSED_REJECTED", (f"not completed: {', '.join(ex.get('blocking') or [])} was still running; "
+                                   "please close it and submit a new request")
     if d in ("ALLOW", "ALLOW_WITH_APPROVAL") and state.get("verified"):
         return "RESOLVED", p.get("reason", "")
     if d in ("ALLOW", "ALLOW_WITH_APPROVAL"):
@@ -51,7 +55,11 @@ def _facts(state, final, reason) -> dict:
             "decision": p.get("decision"), "reason": reason,
             "approver": APPROVER_TEXT.get(p.get("approver_role"), p.get("approver_role")),
             "alternative": ALTERNATIVES.get(u.get("policy_id"), "") if final == "CLOSED_REJECTED" and
-            p.get("decision") == "DENY" else ""}
+            p.get("decision") == "DENY" else "",
+            "close_apps": ", ".join((state.get("execution") or {}).get("blocking") or []) if final in
+            ("WAITING_FOR_USER",) else "",
+            "access_until_utc": ((state.get("execution") or {}).get("expires_at") or "").replace("T", " ")[:16]
+            if final == "RESOLVED" else ""}
 
 
 def template(f: dict) -> str:
@@ -59,14 +67,23 @@ def template(f: dict) -> str:
     if f["outcome"] == "AWAITING_APPROVAL":
         return (f"Your request for {label} is allowed by policy {f['policy_id']} but needs approval by "
                 f"{f['approver']}. Nothing has been changed yet; we will update you after the decision.")
+    if f["outcome"] == "WAITING_FOR_USER":
+        return (f"Please close {f['close_apps']} so that {label} can be installed - the installer cannot run while "
+                "it is open. The installation starts automatically a few minutes after you close it.")
     if f["outcome"] == "CLOSED_REJECTED":
+        if f["reason"].startswith("not completed"):
+            return f"Your request for {label} was not completed: {f['reason'][len('not completed: '):]}."
         if f["decision"] != "DENY":
             return f"Your request for {label} was rejected by the approver ({f['approver']})."
         return f"Your request for {label} was not approved: {f['reason']}. {f['alternative']}".strip()
     if f["outcome"] == "ESCALATED":
         return f"Your request for {label} needs review by the IT team ({f['reason']}). We will update you."
     what = "is now accessible in Chrome" if f["kind"] == "domain" else "has been installed"
-    return f"Done: {label} {what}. Reason: {f['reason']}."
+    until = ""
+    if f.get("access_until_utc"):
+        until = (f" until {f['access_until_utc']} UTC" if f["kind"] == "domain"
+                 else f"; it will be uninstalled automatically at {f['access_until_utc']} UTC as requested")
+    return f"Done: {label} {what}{until}. Reason: {f['reason']}."
 
 
 def message_ok(msg: str, f: dict) -> tuple[bool, str]:
@@ -77,6 +94,8 @@ def message_ok(msg: str, f: dict) -> tuple[bool, str]:
         return False, "uses refusal wording although the request is resolved"
     if f["outcome"] == "AWAITING_APPROVAL" and "approv" not in low:
         return False, "does not mention the pending approval"
+    if f["outcome"] == "WAITING_FOR_USER" and "close" not in low:
+        return False, "does not ask the employee to close the application"
     names = [w for w in ((f.get("target") or "").lower(), (f.get("request") or "").split(" (")[0].lower()) if w]
     if f.get("target") and not any(n in low for n in names):
         return False, "does not name the requested target"
@@ -100,6 +119,8 @@ def compose(state, final: str, reason: str) -> tuple[str, dict]:
             msg = template(f)
     if f["alternative"] and f["alternative"].split("(")[0][:20].lower() not in msg.lower():
         msg = f"{msg} {f['alternative']}"
+    if f["access_until_utc"] and f["access_until_utc"][:10] not in msg:      # time limit must always be stated
+        msg = f"{msg} Access ends {f['access_until_utc']} UTC."
     note = res.data.work_note.strip() if res.ok else ""
     out = f"{final}: {msg}" + (f" [note: {note}]" if note else "") + check
     return msg, step("Communication Agent", out, input=f"outcome={final}; reason={reason}", llm=res)

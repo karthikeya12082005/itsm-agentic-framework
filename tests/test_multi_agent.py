@@ -70,15 +70,30 @@ class FakeLLM:
 
 
 class FakeEndpoint:
+    """Domains: synchronous. Software: synchronous, or with async_jobs=True a RUNNING job (like service v2)."""
     def __init__(self):
         self.executed, self.verify_ok, self.crash = [], True, 0
+        self.blocking, self.async_jobs, self.jobs, self.expires = [], False, {}, []
 
-    def execute(self, kind, target, ticket_id, auth):
+    def execute(self, kind, target, ticket_id, auth, expires_at=None):
         if self.crash:
             self.crash -= 1
             raise RuntimeError("worker process died")
+        if kind == "software" and self.blocking:
+            return {"status": "BLOCKED", "blocking_processes": list(self.blocking), "action_id": "B"}
         self.executed.append((kind, target, ticket_id, auth))
-        return {"status": "SUCCEEDED", "action": "ALLOWLIST_DOMAIN", "action_id": f"A{len(self.executed)}"}
+        self.expires.append(expires_at)
+        aid = f"A{len(self.executed)}"
+        if kind == "software" and self.async_jobs:
+            self.jobs[aid] = {"action_id": aid, "status": "RUNNING"}
+            return dict(self.jobs[aid])
+        return {"status": "SUCCEEDED", "action": "ALLOWLIST_DOMAIN", "action_id": aid, "expires_at": expires_at}
+
+    def precheck(self, package_id):
+        return list(self.blocking)
+
+    def job(self, action_id):
+        return dict(self.jobs.get(action_id, {"status": "SUCCEEDED"}))
 
     def verify(self, kind, target):
         return self.verify_ok
@@ -110,7 +125,10 @@ class Base(unittest.TestCase):
         env = FAKE_ENV if self.use_fake_llm else {"LLM_MODE": "off"}
         patches = [mock.patch.dict(os.environ, env), mock.patch.object(llm_router, "_write_log"),
                    mock.patch.dict(llm_router.CALLERS, {p: self.llm.caller(p) for p in ("groq", "gemini", "ollama")}),
-                   mock.patch.object(agents.endpoint_client, "execute", side_effect=lambda *a: self.ep.execute(*a)),
+                   mock.patch.object(agents.endpoint_client, "execute",
+                                    side_effect=lambda *a, **k: self.ep.execute(*a, **k)),
+                  mock.patch.object(agents.endpoint_client, "precheck", side_effect=lambda *a: self.ep.precheck(*a)),
+                  mock.patch.object(agents.endpoint_client, "job", side_effect=lambda *a: self.ep.job(*a)),
                    mock.patch.object(agents.endpoint_client, "verify", side_effect=lambda *a: self.ep.verify(*a))]
         for p in patches:
             p.start()
@@ -231,7 +249,8 @@ class RuleBasedUnderstanding(unittest.TestCase):
         self.assertEqual(agents.normalise_target("ChatGPT"), "chatgpt.com")
         self.assertEqual(agents.normalise_target("Visual Studio Code"), "Microsoft.VisualStudioCode")
         self.assertEqual(agents.normalise_target("https://www.notion.so/x"), "notion.so")
-        self.assertEqual(agents.normalise_target("Slack"), "Slack")
+        self.assertEqual(agents.normalise_target("Figma"), "Figma")          # unknown software name kept
+        self.assertEqual(agents.normalise_target("Slack"), "SlackTechnologies.Slack")
         self.assertTrue(agents.grounded("chatgpt.com", "I need ChatGPT"))
         self.assertTrue(agents.grounded("Microsoft.VisualStudioCode", "install vs code please"))
         self.assertFalse(agents.grounded("gemini.google.com", "I need ChatGPT"))

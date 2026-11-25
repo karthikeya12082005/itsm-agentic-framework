@@ -6,7 +6,9 @@ interface. Agent state is checkpointed per ticket in data/checkpoints/agents.sql
   python -m src.access.cli worker [--once] [--interval 30]   poll for NEW tickets (+ stuck-ticket sweep)
   python -m src.access.cli process INC0010010                (or: process --all)
   python -m src.access.cli approve INC0010012 --by security01 [--reject]
-  python -m src.access.cli sweep [--older-than 600]          finish tickets stuck In Progress
+  python -m src.access.cli sweep [--older-than 600]          resume finished installs / closed apps, finish
+                                                             stuck tickets, revoke expired time-limited grants
+  python -m src.access.cli grants                            active time-limited grants on the endpoint
   python -m src.access.cli show INC0010010                   ticket + work notes
   python -m src.access.cli trace INC0010010                  agent trace from the checkpoint (model, latency)
   python -m src.access.cli list
@@ -22,7 +24,7 @@ import sys
 import textwrap
 
 from src.access.ticket_source import SOURCES, get_source
-from src.access.worker import approve_ticket, process_ticket, run_poller, sweep_stuck
+from src.access.worker import approve_ticket, expire_grants, process_ticket, run_poller, tend_active
 from src.orchestrator import checkpoint as cp
 
 DEMO = ["I need ChatGPT (chatgpt.com) to help me debug Python code faster.",
@@ -100,11 +102,12 @@ def main():
     w = sub.add_parser("worker", help="poll for NEW tickets and process them")
     w.add_argument("--interval", type=float, default=30); w.add_argument("--once", action="store_true")
     w.add_argument("--stuck-after", type=float, default=600, help="sweep tickets In Progress longer than this (s)")
-    sw = sub.add_parser("sweep", help="finish tickets stuck In Progress from their checkpoint")
+    sw = sub.add_parser("sweep", help="tend paused/stuck tickets and revoke expired grants")
     sw.add_argument("--older-than", type=float, default=600)
     s = sub.add_parser("show"); s.add_argument("number")
     tr = sub.add_parser("trace"); tr.add_argument("number")
     sub.add_parser("list")
+    sub.add_parser("grants")
     sub.add_parser("demo")
     for sp in (p, a, w, sw, sub.choices["demo"]):
         sp.add_argument("--no-retrieval", action="store_true")
@@ -128,6 +131,11 @@ def main():
         show(source, args.number)
     elif args.cmd == "trace":
         show_trace(source, saver, args.number)
+    elif args.cmd == "grants":
+        from src.access import endpoint_client
+        for g in endpoint_client.grants():
+            print(f"{g['ticket_id']}  {g['action']:<18} {g['params']}  expires {g['expires_at']}"
+                  + ("  DUE" if g["due"] else ""))
     elif args.cmd == "list":
         for r in source.list():
             print(f"{r['number']}  {r['state']:<18} {str(r['decision']):<20} {str(r['target']):<28} {r['created_at']}")
@@ -154,8 +162,9 @@ def main():
         elif args.cmd == "worker":
             sys.exit(run_poller(source, graph, args.interval, args.once, stuck_after_s=args.stuck_after))
         elif args.cmd == "sweep":
-            done = sweep_stuck(source, graph, args.older_than)
-            print(f"sweep: {len(done)} ticket(s) recovered")
+            done = tend_active(source, graph, args.older_than)
+            expired = expire_grants(source)
+            print(f"sweep: {len(done)} ticket(s) resumed/recovered, {len(expired)} grant(s) expired")
         elif args.cmd == "demo":
             for text in DEMO:
                 num = source.create("employee01", text)

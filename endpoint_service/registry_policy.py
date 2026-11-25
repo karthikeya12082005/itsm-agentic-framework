@@ -106,6 +106,16 @@ def get_policy_state(sid: str) -> dict:
                 "download_restrictions": _read_dword(sid, "DownloadRestrictions")}
 
 
+def ensure_blocked(sid: str, domains: list) -> dict:
+    """Add managed domains missing from URLBlocklist (never removes anything). Returns {'added': [...]}."""
+    with user_hive(sid):
+        current = _read_list(sid, "URLBlocklist")
+        missing = [d for d in domains if d not in current]
+        if missing:
+            _write_list(sid, "URLBlocklist", current + missing)
+        return {"added": missing}
+
+
 def set_domain_allowed(sid: str, domain: str, allowed: bool) -> dict:
     """Adds (allowed=True) or removes (allowed=False) a domain in URLAllowlist.
     Returns the allowlist before and after the change."""
