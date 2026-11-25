@@ -114,6 +114,15 @@ class Setup:
                 self.change(f"{u}: {', '.join(diff)}", lambda r=r, diff=diff: self.a.patch("sys_user", r["sys_id"], diff))
             else:
                 self.say(f"{u}: e-mail and login flags", "unchanged")
+        # the integration user is a machine: its placeholder address would make Gmail bounce every "work notes
+        # added" mail back to the demo inbox once ServiceNow really sends -> notifications off for ai.agent
+        agent = env("SERVICENOW_USER") or "ai.agent"
+        r = self.one("sys_user", f"user_name={agent}", "sys_id,notification")
+        if r and _val(r.get("notification")) != "1":
+            self.change(f"{agent}: e-mail notifications off (machine user)",
+                        lambda: self.a.patch("sys_user", r["sys_id"], {"notification": "1"}))
+        elif r:
+            self.say(f"{agent}: e-mail notifications off", "unchanged")
 
     # ------------------------------------------------------------------ 6.5 outbound e-mail
     def email(self):
@@ -145,7 +154,8 @@ class Setup:
         """The PDI has NO outgoing mail account (sys_email_account empty: queued mails never leave). This creates
         one that sends through the same Gmail account as the agents' fallback (SMTP_* in .env)."""
         print("Outgoing mail account (ServiceNow -> Gmail SMTP)")
-        host, port, user, pw = env("SMTP_HOST"), env("SMTP_PORT") or "587", env("SMTP_USER"), env("SMTP_PASSWORD")
+        host, port, user = env("SMTP_HOST"), env("SMTP_PORT") or "587", env("SMTP_USER")
+        pw = env("SMTP_PASSWORD").replace(" ", "")              # Gmail shows app passwords in groups of four
         if not (host and user and pw):
             self.say("SMTP_HOST / SMTP_USER / SMTP_PASSWORD not all set in .env", "skipped")
             return
