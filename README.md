@@ -13,10 +13,17 @@ by deterministic, auditable code**:
    or software. The agents decide ALLOW / DENY / ALLOW_WITH_APPROVAL / ESCALATE_FOR_REVIEW, enforce the decision
    on the laptop through a fixed action catalogue, verify the real endpoint state, and record everything on the
    ServiceNow incident. A human is involved only when a policy requires an approval.
-3. **Incident resolution on simulated services.** Monitoring opens an incident when one of four local services
-   breaks. A ReAct RCA agent with Bayesian root-cause ranking finds the cause. A remediation is chosen from the
+3. **Incident resolution on simulated services.** Monitoring opens an incident when one of five local services
+   breaks: a web shop, its API, a cache, a queue worker, and a remote-access **VPN gateway** (IPsec tunnel,
+   internal DNS, VPN profiles). An employee can also report a problem in their own words ("I cannot connect to
+   the VPN"). A ReAct RCA agent with Bayesian root-cause ranking finds the cause. A remediation is chosen from the
    SOPs and passes a policy check, a critic and, if required, an approval. It is executed, the fix is verified
    by predicates, and it is rolled back or escalated if the fix does not hold.
+
+Employees raise tickets themselves, either in the **ServiceNow Service Portal** (form "AI Service Desk request",
+with their own login) or in the local **IT Help** portal on their Windows desktop. They follow the agents' replies
+there and **by e-mail**: ServiceNow notifications sent through a Gmail account, with the agents' own SMTP as a
+fallback. Approvers are e-mailed when a request waits for them.
 
 ---------------------------------------------------------------------------------------------------------------
 
@@ -46,10 +53,11 @@ flowchart LR
     ROUTER[[LLM router<br/>Gemini / Groq / Ollama<br/>timeouts, JSON schema, fallback]]
     KB[(Knowledge store<br/>Neon Postgres + pgvector<br/>BM25 + dense + RRF)]
     EP[Endpoint enforcement service<br/>FastAPI, Administrator<br/>Chrome policy + winget]
-    LAB[Simulated services<br/>web, orders-api, cache, worker<br/>+ fault injector + monitor]
+    LAB[Simulated services<br/>web, orders-api, cache, worker, vpn-gateway<br/>+ fault injector + monitor]
     DASH[Dashboard<br/>read-only]
 
-    EMP -- "cli new / ServiceNow form" --> INC
+    EMP -- "Service Portal form / IT Help portal / cli new" --> INC
+    INC -. "e-mail (Gmail SMTP): created, replies, resolved, approval needed" .-> EMP & APR
     LAB -- "monitor opens incidents" --> INC
     INC -- "TicketSource (REST)" --> SUP
     SUP --> UND & RET & RCA & POL & CRI & EXE & VER & COM
@@ -60,6 +68,7 @@ flowchart LR
     EXE -- "remediation catalogue" --> LAB
     VER -- "predicates on real state" --> EP & LAB
     COM -- "work notes, comments, state" --> INC
+    COM -. "SMTP fallback" .-> EMP
     APR -- "cli approve (checked against ServiceNow)" --> CP
     SUP --- CP
     DASH --> INC & CP
@@ -99,7 +108,9 @@ next plan or rollback -> escalate.
 | `src/orchestrator/` | LangGraph state, supervisor graph + `route()`, guardrails, trace, SQLite checkpointer |
 | `src/access/` | access agents, critic, communication, catalogue (30 targets / 11 policies), ticket sources, worker, CLI |
 | `src/incident/` | incident agents, RCA (ReAct), Bayesian ranking, evidence features, read-only tools |
-| `src/lab/` | simulated services, supervisor, fault injector (8 faults), remediation actions, monitor |
+| `src/lab/` | simulated services incl. the VPN gateway, supervisor, fault injector (11 faults), remediation actions, monitor |
+| `src/portal/` | local "IT Help" portal for employees (token sign-in from a desktop shortcut) |
+| `src/common/notify.py` | e-mail: SMTP fallback for messages ServiceNow did not send |
 | `src/integrations/` | ServiceNow REST client, auth check, integration-user creation, idempotent setup |
 | `src/dashboard/` | read-only web dashboard |
 | `endpoint_service/` | Windows enforcement service (Chrome policies for `employee01`, winget installs), scripts |
@@ -143,6 +154,8 @@ notepad .env          # put every value between single quotes: NAME='value'
 | `OLLAMA_BASE_URL` | `'http://localhost:11434'` (optional) |
 | `HF_TOKEN` | huggingface.co -> Settings -> Access Tokens -> Read (optional) |
 | `LLM_UNDERSTANDING` ... `LLM_COMMUNICATION` | `provider:model` per agent, e.g. `'groq:openai/gpt-oss-20b'`; see `python -m src.common.check_llms --list` |
+| `NOTIFY_DEMO_EMAIL` | one mailbox for all demo people (they get plus-addresses such as `you+employee01@gmail.com`) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | `smtp.gmail.com`, `587`, the Gmail address, a Gmail **App Password** (needs 2-Step Verification) |
 
 `.env` is git-ignored. Run `python scripts/check_staged_secrets.py` before every commit.
 
@@ -161,7 +174,14 @@ python -m src.knowledge.ingest         # schema + embeddings -> Neon (re-runnabl
    click **Save Password**.
 3. `python -m src.integrations.servicenow_setup`: creates the user records (employee01, manager01 and the
    approvers) and the groups (IT Security, AI Service Desk, Change Advisory Board, ...). It is idempotent.
-4. Clear `SERVICENOW_ADMIN_PASSWORD` again, then check:
+4. `python -m src.integrations.servicenow_portal_setup`: creates the portal form "AI Service Desk request", the
+   "approval needed" notification, and ServiceNow's outgoing mail account (Gmail SMTP from `.env`). It switches
+   outbound e-mail on and gives the demo people their plus-addresses. Run `--check` first to see what it would
+   change, and `--test` afterwards (it submits the form as employee01).
+5. Logins: in the PDI as admin, open **User Administration → Users** and, for each of employee01, manager01,
+   security01, serviceowner01, cab01, aigov01, appowner01 and dataowner01, click **Set Password**, then
+   **Save Password**. API password writes have no effect on PDIs.
+6. Clear `SERVICENOW_ADMIN_PASSWORD` again, then check:
    `python -m src.integrations.check_sn_auth` (HTTP 200) and `python -m src.integrations.servicenow_setup --test`.
 
 ### 5. LLMs
@@ -179,6 +199,14 @@ python -m uvicorn endpoint_service.server:app --host 127.0.0.1 --port 8765     #
 ```
 Check it from a normal terminal with `python endpoint_service\test_endpoint.py`. Chrome must be restarted for
 `employee01` to pick up new policies.
+
+### 7. IT Help portal for employee01 (Administrator terminal, once)
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\portal\install_it_help.ps1 -UserName employee01
+```
+This writes a sign-in token into employee01's own profile, readable only by that user and administrators, and puts
+an **IT Help** shortcut on their desktop. The portal itself runs in the project owner's normal terminal
+(`python -m src.portal`); employee01 never needs the project folder or `.env`.
 
 ---------------------------------------------------------------------------------------------------------------
 
@@ -209,15 +237,35 @@ python -m src.access.cli list | grants | sweep
 Options: `--source local`, `--rules-only`, `--llm-single groq:openai/gpt-oss-20b`, `--no-retrieval`,
 `--no-rewrite`, `-v` (log every LLM call).
 
+### How employees raise tickets
+Two ways in, plus e-mail, and the same agent worker handles them all:
+1. **ServiceNow Service Portal.** Sign in as the employee and open the "AI Service Desk request" form at
+   `https://<instance>/sp?id=sc_cat_item&sys_id=<form sys_id printed by servicenow_portal_setup>`. Choose "Access
+   to a website, AI tool or software" or a problem type (VPN/network, application, software, hardware) and
+   describe it. **My Requests** shows the tickets and the agents' replies.
+2. **IT Help on the Windows desktop.** Double-click the shortcut, use the same form, and see your tickets with
+   the replies. It needs `python -m src.portal` running.
+3. **E-mail.** ServiceNow mails the employee when the ticket is created, when the agents reply, and when it is
+   resolved. Approvers get "Approval needed: INC…" with the `approve` command. If ServiceNow has not sent a mail
+   after 3 minutes, the worker sends it by SMTP (`python -m src.access.cli notify` sends pending mails on demand).
+
+From the command line: `python -m src.access.cli new --category network "I cannot connect to the VPN"`. Access
+requests use the employee's role in the policy check; problem reports are diagnosed on the lab services.
+
 ### Incidents on the simulated services
 ```powershell
-python -m src.lab.supervisor start            # web 9101, orders-api 9102, cache 9103, worker 9104 (no admin, no Docker)
+python -m src.lab.supervisor start            # web 9101, orders-api 9102, cache 9103, worker 9104, vpn-gateway 9105 (no admin, no Docker)
 python -m src.lab.faults list
 python -m src.lab.faults inject memory_leak
 python -m src.lab.monitor --once              # opens a ServiceNow incident for each independent failure
 python -m src.access.cli worker --once        # the same worker handles incidents
 python -m src.lab.supervisor reset            # healthy again
 ```
+Network faults: `vpn_tunnel_down` (fix: restart the network device), `dns_failure` (flush the resolver and re-sync
+the record; needs IT service owner approval), `vpn_credential_expired` (re-issue the VPN profile). The policy is
+checked with the role of whoever raised the ticket. POL-0004 lets an employee's VPN outage be fixed by an
+automatic tunnel restart, but not one raised by the monitoring on-call role; that one is escalated to the
+Service Desk.
 
 ### Dashboard
 ```powershell

@@ -71,8 +71,12 @@ FAULTS = {
                           "sn_category": "internal_applications",
                           "describe": "orders-api is down; web (which depends on it) returns 5xx"},
     # ---- network / VPN (6.1)
+    # expected_final: the correct outcome when MONITORING raises it - POL-0004's eligible roles exclude the on-call
+    # SRE role, so the rule engine denies the automatic restart and the incident goes to the Service Desk (an
+    # employee-reported VPN outage is fixed automatically, tests/test_incident.py). Default expectation: RESOLVED.
     "vpn_tunnel_down":   {"service": "vpn-gateway", "root_cause": "NETWORK_FAILURE", "sop": "SOP-0004",
                           "action": "RESTART_NETWORK_DEVICE", "dataset_category": "VPN", "sn_category": "network",
+                          "expected_final": "ESCALATED",
                           "describe": "the gateway's IPsec tunnel to the data centre dropped (dead-peer detection)"},
     "dns_failure":       {"service": "vpn-gateway", "root_cause": "DNS_MISCONFIGURATION", "sop": "SOP-0001",
                           "action": "UPDATE_DNS_RECORD", "dataset_category": "NETWORK", "sn_category": "network",
