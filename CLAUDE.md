@@ -593,13 +593,24 @@ User decisions (Nov 25 2026, branch phase-6-portal-network): ticket entry = BOTH
 (employees with logins) AND a local Windows portal app; notifications = BOTH ServiceNow email notifications AND
 SMTP from the agents as fallback; real logins for employee01, manager01 and the 6 approver users; approvals stay
 CLI-only (approvers see requests in ServiceNow + get emails, decide with `cli approve`).
-- [ ] 6.1 Lab: `vpn-gateway` service (port 9105, remote-access path vpn-gateway -> web; tunnel, DNS resolver, VPN
+- [x] 6.1 Lab: `vpn-gateway` service (port 9105, remote-access path vpn-gateway -> web; tunnel, DNS resolver, VPN
       profile). Faults vpn_tunnel_down (NETWORK_FAILURE, SOP-0004 RESTART_NETWORK_DEVICE, POL-0004 ALLOW),
       dns_failure (DNS_MISCONFIGURATION, SOP-0001 UPDATE_DNS_RECORD = flush resolver cache + re-sync record,
       POL-0001 AWA IT_SERVICE_OWNER), vpn_credential_expired (EXPIRED_CREDENTIAL, SOP-0010 PROVISION_VPN_PROFILE,
       POL-0010 ALLOW). Actions with rollback specs; RCA tool check_vpn + evidence features + likelihoods; monitor
       category network; free-text "VPN" reports triaged to vpn-gateway. Test: all 11 faults rules-only resolved,
       live ServiceNow incident for each VPN fault.
+      (Nov 25 2026. Catalogue actions carry the SOP action names (plan requires action_type in the catalogue).
+      Policy finding: POL-0004's user_role excludes the monitoring on-call role SITE_RELIABILITY_ENGINEER -> rule
+      engine DENY. Not bent: policy role = the reporter's role (monitoring -> SRE, employee ticket -> the
+      employee's title), like the access flow. Live: INC0010061 VPN profile expired -> ReAct used check_vpn ->
+      EXPIRED_CREDENTIAL -> PROVISION_VPN_PROFILE -> RESOLVED 74 s; INC0010062 DNS -> security01 REFUSED,
+      serviceowner01 approved -> UPDATE_DNS_RECORD -> RESOLVED; INC0010063 monitoring tunnel outage -> DENY (SRE not
+      eligible under POL-0004) -> ESCALATED; INC0010064 employee01 "cannot connect to the VPN" (`cli new --category
+      network`) -> LLM triage vpn-gateway -> POL-0004 ALLOW for DEVELOPER -> RESTART_NETWORK_DEVICE -> RESOLVED 21 s.
+      Rules-only live check all 11 faults OK after a fix: settle() reset only DIRECT dependents -> the gateway (two
+      hops above orders-api/cache) stayed degraded on stale errors -> transitive dependents. Lab start timeout 30 ->
+      60 s (a start took > 30 s with 0.7 GB RAM free). 37 lab/incident tests.)
 - [ ] 6.2 ServiceNow logins: users get web login (not web-service-only), roles for the portal; passwords set by the
       user in the UI (API password writes have no effect). Test: each user can log in; employee01 sees only own
       tickets.
