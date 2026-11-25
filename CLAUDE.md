@@ -125,6 +125,8 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   `python -m src.integrations.servicenow_client smoke [--write]`), servicenow_setup.py (1.2, lean design:
   user records, groups IT Security + AI Service Desk, APPROVER_GROUPS map; setup needs admin, `--test` runs
   as ai.agent only).
+- `src/lab/` (Phase 4) — config.py (SERVICES, thresholds, FAULTS ground truth), service.py, supervisor.py,
+  faults.py, actions.py (remediation action catalogue + audit data/lab/audit.jsonl + rollback).
 - `tests/` — stdlib unittest (no pytest): `python -m unittest discover -s tests -t . -v`.
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
@@ -440,10 +442,18 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
 **Phase 3 COMPLETE (Nov 25 2026)** — branch phase-3-hardening merged into main.
 
 ## Phase 4 — Objective 3: incident resolution on simulated services
-- [ ] 4.1 Simulated services (e.g. FastAPI web app, worker queue, Postgres/SQLite DB, cache) with health
+- [x] 4.1 Simulated services (e.g. FastAPI web app, worker queue, Postgres/SQLite DB, cache) with health
       endpoints, metrics and logs, run locally (docker optional; must work on Windows Home without admin).
-- [ ] 4.2 Fault injector: service down, high latency, memory leak, disk full (simulated), bad config, expired
+      (src/lab: web 9101 -> orders-api 9102 (config release, DB connection pool) -> cache 9103; worker 9104 (spool
+      dir). One FastAPI app per process (`python -m src.lab.service <name>`), GET /health /metrics /logs, POST
+      /work; admin endpoints behind a random token in data/lab/token. `python -m src.lab.supervisor
+      start|stop|status|restart|reset` (plain processes, PIDs in data/lab/pids.json, no admin, no Docker).)
+- [x] 4.2 Fault injector: service down, high latency, memory leak, disk full (simulated), bad config, expired
       certificate (simulated), DB connection pool exhausted — each mapped to dataset root_cause_category and SOP.
+      (`python -m src.lab.faults list|inject <fault>|clear`; 8 faults incl. dependency_down, ground truth in
+      src/lab/config.FAULTS (eval only). Live Nov 25 2026: every fault injected -> symptom on /health -> its
+      catalogue action (src/lab/actions.py, audited, rollback specs) -> all services healthy again. Symptoms
+      spread like real ones (cache bloat -> latency on web, orders-api AND cache). tests/test_lab.py 9 tests.)
 - [ ] 4.3 Monitoring -> auto-create ServiceNow INCIDENT with symptoms/observed state/diagnostic data.
 - [ ] 4.4 RCA Agent: ReAct diagnosis loop with tools (check health, read logs, read metrics) + LLM hypotheses +
       Bayesian root-cause ranking (priors from historical_incidents, likelihoods from evidence).
