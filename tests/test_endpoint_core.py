@@ -54,8 +54,13 @@ class Grants(unittest.TestCase):
              "rollback": rb, "ticket_id": "INC4"},
             {"action_id": "R4", "action": "ROLLBACK", "status": "SUCCEEDED", "params": {"of_action_id": "A4"}},
         ]
+        recs.append({"action_id": "S1", "action": "INSTALL_SOFTWARE", "status": "SUCCEEDED", "expires_at": past,
+                     "ticket_id": "INC5", "params": {"package_id": "7zip.7zip"},
+                     "rollback": {"action": "UNINSTALL_SOFTWARE", "params": {"package_id": "7zip.7zip"}}})
+        recs.append({"action_id": "S2", "action": "INSTALL_SOFTWARE", "status": "SUCCEEDED", "expires_at": None,
+                     "rollback": None})                                 # already installed before: no expiry
         g = {x["action_id"]: x["due"] for x in core.active_grants(recs, now)}
-        self.assertEqual(g, {"A1": True, "A2": False})
+        self.assertEqual(g, {"A1": True, "A2": False, "S1": True})
 
 
 if __name__ == "__main__":

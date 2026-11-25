@@ -167,6 +167,15 @@ after the first (first ~20-45 s: Gemini latency); approver checks refuse wrong p
 Phase 2 on ServiceNow (Nov 24 2026, multi-LLM, retrieval on): INC0010033-38 ChatGPT DENY 7.7 s (first ticket;
 was 29 s before the embedding warm-up), Gemini RESOLVED 7.1 s, GitHub AWAITING 7.3 s -> approved in another
 process -> RESOLVED, notion.so ESCALATED 4.9 s, prompt injection ESCALATED 4.2 s, "remove pypi.org" ESCALATED.
+Phase 3 evaluation (evaluation/results/access_eval_summary.md, Nov 25 2026):
+- Dataset test split, 77 access/service tickets: rule engine on the ticket's own policy 0.844 decision exact match
+  (1.000 without the 12 ESCALATE labels = dataset scenario escalated_no_permitted_action); hybrid-retrieved policy
+  Hit@1 0.688 -> decision exact match 0.701.
+- 52 labelled catalogue requests, full graph, simulated endpoint: rules-only / agentic: target 0.981 / 0.981,
+  decision 0.981 / 0.981, final state 0.981 / 0.981 (both miss R51: rules read ChatGPT; agentic reads Gemini but
+  the critic's stricter-rule-reading check escalates - intended), automation 0.846 / 0.827, escalation
+  0.135 / 0.154, approval 0.288 / 0.288, verification 1.0 / 1.0, MTTR 0.43 s / 4.35 s, agentic fallbacks 30.6 %
+  all to the secondary provider (Gemini 429 quota), 0 rule-based.
 Root cause of the old slow first ticket: ~20 s lazy load of the embedding model inside the first k-NN lookup
 (+ Gemini timeouts) -> model loaded at worker start (17 s) + LLM warm-up puts down models in cooldown.
 
@@ -209,6 +218,8 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
 - (fixed in 2.1/2.8) slow first ticket; stuck In Progress tickets (sweep).
 - Gemini 3.5-flash / flash-lite are often 503 "high demand" or take 10-30 s (Nov 2026). The router's cooldown and
   warm-up handle it; the critic then runs on groq gpt-oss-120b.
+- Gemini free tier: 429 quota on gemini-3.5-flash and -flash-lite during long batch runs (Nov 25 2026) ->
+  critic and retrieval rewrite move to Groq (router secondary); evaluations pace tickets (--pace 5).
 - Groq free tier rate-limits gpt-oss-120b (HTTP 429 after ~4 critic calls within a minute, ~1.2k tokens each).
   Batch evaluation (3.5 / 5.1) must pace calls or accept fallbacks; the router logs every fallback.
 - Phase-1 tickets (INC0010001-24) have no checkpoint: `list`/`show` show decision/target as None for them.
@@ -373,33 +384,60 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
   IT Service Owners/serviceowner01 (IT_SERVICE_OWNER), Change Advisory Board/cab01, AI Governance Board/aigov01,
   Application Owners/appowner01, Data Owners/dataowner01. Needs SERVICENOW_ADMIN_PASSWORD temporarily (guide the
   user), clear it afterwards. Update catalog.APPROVER_GROUPS + LOCAL_GROUP_MEMBERS (single source of truth).
-- Planned design: endpoint service v2 in ONE restart (Admin terminal): /precheck/software (running processes,
-  3.1), async install jobs + GET /jobs/{id} (3.7, graph waits via interrupt, worker resumes), uninstall with
-  --scope machine + domain rollback restores the domain's recorded "before" state (3.6), optional expires_at on
-  grants, worker revokes due grants via /actions/rollback and notes the ticket (3.3). New neutral status
-  WAITING_FOR_USER (On Hold, awaiting caller) for "close VS Code" with automatic retry when the app is closed.
-  3.4 is already covered (unit test + live INC0010031/36) - tick after a final check.
-- [ ] 3.1 Pre-check running process before software install (Code.exe, chrome.exe, Postman.exe...): clear user
+- Design: endpoint service v2 (one restart): pre-check, async install jobs, before-state rollback, expiry; new
+  neutral status WAITING_FOR_USER (ServiceNow On Hold + `hold_reason` 1 "Awaiting Caller" - on this PDI the field
+  is `hold_reason`, NOT `on_hold_reason`, checked via /api/now/ui/meta/incident). Live evidence Nov 25 2026:
+  `python endpoint_service\test_endpoint.py` RESULT OK; incidents INC0010042-47.
+- [x] 3.1 Pre-check running process before software install (Code.exe, chrome.exe, Postman.exe...): clear user
       message "close X and resubmit" instead of escalation; test with VS Code open.
-- [ ] 3.2 Approver role enforcement (done in 1.5 for the CLI; extend to other approver roles, e.g.
+      (endpoint_config.PACKAGE_PROCESSES + GET /precheck/software; the service also refuses an install while the app
+      runs (status BLOCKED, no attempt used). Graph: BLOCKED -> request_user_action (message "Please close
+      Code.exe ...") -> await_user interrupt; worker tend_active re-checks every poll: closed -> install; still
+      open after 24 h -> CLOSED_REJECTED "close it and submit a new request". Live with VS Code open: INC0010042
+      -> On Hold / Awaiting Caller in ServiceNow; time-out path -> Canceled with that message.)
+- [x] 3.2 Approver role enforcement (done in 1.5 for the CLI; extend to other approver roles, e.g.
       IT_SERVICE_OWNER / CHANGE_ADVISORY_BOARD for Objective 3, with groups created by servicenow_setup.py).
-- [ ] 3.3 Revocation / time-limited access (duration variable) with automatic rollback when expired.
-- [ ] 3.4 Unknown target -> ESCALATE_FOR_REVIEW; test with a domain not in the catalogue.
-- [ ] 3.6 Rollback correctness: winget uninstall must use `--scope machine` (as install does); domain rollback
+      (Every approver role in the dataset has a group: IT Security/security01, IT Service Owners/serviceowner01,
+      Change Advisory Board/cab01, AI Governance Board/aigov01, Application Owners/appowner01, Data
+      Owners/dataowner01 (catalog.APPROVER_GROUPS + APPROVER_USERS). Setup run with the admin password (then
+      cleared; re-run all unchanged; `--test` as ai.agent OK for all 6 roles). Live INC0010045 Hugging Face
+      (AI_GOVERNANCE_BOARD): security01 REFUSED (exit 2), aigov01 approved -> allowlisted -> verified -> RESOLVED.)
+- [x] 3.3 Revocation / time-limited access (duration variable) with automatic rollback when expired.
+      (agents.parse_duration "for 2 days", "for the next 3 hours", "today only", minutes; LLM duration used only if
+      the text has a time word; capped at 30 days; domains AND installs (install expiry = uninstall; added after
+      the eval showed the critic rightly escalating "7-Zip for 3 days"; live INC0010048 "7-Zip for 2 minutes":
+      job -> Resolved -> expiry sweep uninstalled it, verify not installed). expires_at sent
+      to the service and audited; GET /grants; worker expire_grants each poll -> audited rollback + note + comment.
+      Live INC0010044 "gemini.google.com for 2 minutes": RESOLVED "until ... UTC", after expiry `cli sweep` ->
+      revoked, note on the incident. `cli grants` lists active time-limited grants.)
+- [x] 3.4 Unknown target -> ESCALATE_FOR_REVIEW; test with a domain not in the catalogue.
+      (Unit tests: notion.so, some-unknown-tool.org, Figma, "laptop fan is loud" -> ESCALATE_FOR_REVIEW, nothing
+      executed; endpoint refuses unmanaged domains (403, live test). Live: INC0010031 / INC0010036 notion.so.)
+- [x] 3.6 Rollback correctness: winget uninstall must use `--scope machine` (as install does); domain rollback
       must restore the recorded "before" allowlist (not revoke a grant that existed before the ticket).
-- [ ] 3.7 Endpoint client timeout (1500 s) must not block the poller: run installs asynchronously or per-ticket.
-- [ ] 3.8 Extend the access catalogue beyond the 15 demo targets (user's request, Nov 24 2026). Objective 2 uses
-      7 of 60 policies (POL-0017/18/19/25/27/28/30). Data-only additions (TARGETS + MANAGED_DOMAINS /
-      APPROVED_PACKAGES): POL-0020 prohibited software DENY (e.g. qBittorrent, uTorrent); POL-0023 enterprise
-      apps ALLOW (Zoom, Slack, Teams, Notepad++, 7-Zip); POL-0026 website blocked by filter AWA SECURITY_TEAM
-      (stackoverflow.com, docs.python.org...); POL-0029 AI dev platforms AWA AI_GOVERNANCE_BOARD
-      (huggingface.co, kaggle.com, colab.research.google.com -> new SN group via servicenow_setup); more DENY
-      sites under POL-0027/0030 (dropbox personal, deepseek...). New endpoint action types (bigger): POL-0033/34
-      unlock / reset the local account, POL-0037 group membership (in ServiceNow itself), POL-0038 local admin
-      rights (likely DENY or ESCALATE on a restricted laptop). Unknown targets keep ESCALATE_FOR_REVIEW.
-      Objective-3 policies (NETWORK/APPLICATION/INFRASTRUCTURE/DATABASE) belong to Phase 4.
-- [ ] 3.5 `evaluation/eval_access.py`: batch of labelled requests (incl. dataset access tickets) -> decision exact
+      (RESTORE_DOMAIN rollback spec = the domain's before-state; a second rollback is refused (409); v1 audit
+      records still roll back. Live: grant A + grant B, rollback B keeps A's access, rollback A removes it;
+      7-Zip install of INC0010043 rolled back -> uninstall --scope machine -> verify "not installed".)
+- [x] 3.7 Endpoint client timeout (1500 s) must not block the poller: run installs asynchronously or per-ticket.
+      (Service runs winget in a background job and answers RUNNING at once; GET /jobs/{id}. Graph: RUNNING ->
+      await_job interrupt, ticket stays In Progress with "installation started" comment; worker tend_active polls
+      the job and resumes -> verify. Client timeouts now 30-120 s (1500 s only for an uninstall rollback). Unknown
+      job after a service restart = FAILED -> retry / verify real state. Live: INC0010043 7-Zip IN_PROGRESS ->
+      sweep: job SUCCEEDED -> verified -> RESOLVED.)
+- [x] 3.8 Extend the access catalogue beyond the 15 demo targets (user's request, Nov 24 2026). Level 1 (user's
+      choice): +15 targets -> 30 targets under 11 policies: POL-0020 DENY (qBittorrent, uTorrent), POL-0023 ALLOW
+      (Zoom, Slack, Teams, Notepad++, 7-Zip; machine-scope installers checked with winget), POL-0026 AWA
+      SECURITY_TEAM (stackoverflow.com, docs.python.org), POL-0029 AWA AI_GOVERNANCE_BOARD (huggingface.co,
+      kaggle.com, colab.research.google.com), DENY dropbox.com (POL-0027), deepseek.com / chat.deepseek.com
+      (POL-0030). Service adds new managed domains to the blocklist at start (audited BASELINE); apply script
+      updated. tests/test_catalog.py checks catalogue <-> policies <-> endpoint lists. Live: qBittorrent and
+      dropbox DENY (INC0010046/47), Hugging Face approved (INC0010045). Level 2 (new action types) not done.
+- [x] 3.5 `evaluation/eval_access.py`: batch of labelled requests (incl. dataset access tickets) -> decision exact
       match, automation rate, escalation rate, approval rate, MTTA, MTTR, verification pass rate; save tables.
+      (Saved: evaluation/results/access_eval_summary.{json,md}, access_dataset_decisions.csv,
+      access_catalogue_{rules,agentic}.csv; `--report` rewrites the .md. Numbers: see "Results so far".)
+
+**Phase 3 COMPLETE (Nov 25 2026)** — branch phase-3-hardening merged into main.
 
 ## Phase 4 — Objective 3: incident resolution on simulated services
 - [ ] 4.1 Simulated services (e.g. FastAPI web app, worker queue, Postgres/SQLite DB, cache) with health

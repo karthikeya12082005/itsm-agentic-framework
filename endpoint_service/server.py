@@ -11,7 +11,7 @@ v2 changes:
   * POST /actions/install_software  refuses with status BLOCKED while the app runs; otherwise starts a
                                     background job and answers RUNNING at once (3.7); GET /jobs/{action_id}
   * domain actions record the 'before' state; rollback restores exactly that (3.6); uninstall machine-scope
-  * optional expires_at on domain grants; GET /grants lists active time-limited grants (3.3)
+  * optional expires_at on domain grants and installs; GET /grants lists active time-limited grants (3.3)
   * a second rollback of the same action is refused (409)
 """
 import ctypes
@@ -77,6 +77,7 @@ class SoftwareRequest(BaseModel):
     package_id: str
     ticket_id: str = Field(pattern=TICKET_RE)
     authorization_id: str = Field(min_length=3, max_length=64)
+    expires_at: str | None = Field(default=None, max_length=40)  # time-limited install: uninstalled when due
 
 
 class RollbackRequest(BaseModel):
@@ -186,7 +187,7 @@ def revoke_domain(req: DomainRequest):
                    "rollback": core.domain_rollback_spec(d, result["before"])})
 
 
-def _install_job(action_id: str, req: SoftwareRequest) -> None:
+def _install_job(action_id: str, req: SoftwareRequest, expires_at: str | None = None) -> None:
     p = req.package_id
     try:
         result = wg.install(p)
@@ -197,12 +198,14 @@ def _install_job(action_id: str, req: SoftwareRequest) -> None:
         "action_id": action_id, "action": "INSTALL_SOFTWARE", "params": {"package_id": p},
         "ticket_id": req.ticket_id, "authorization_id": req.authorization_id,
         "status": "SUCCEEDED" if ok else "FAILED", **result,
+        # an expiry only makes sense for something this job installed (rollback exists)
+        "expires_at": expires_at if result.get("changed") else None,
         "rollback": {"action": "UNINSTALL_SOFTWARE", "params": {"package_id": p}} if result.get("changed") else None})
 
 
 @app.post("/actions/install_software", dependencies=[Depends(require_token)])
 def install_software(req: SoftwareRequest):
-    p = _check_package(req.package_id)
+    p, exp = _check_package(req.package_id), _check_expiry(req.expires_at)
     blocking = core.blocking_processes(p, core.running_processes())
     if blocking:                              # the installer would cancel silently (seen with VS Code)
         return _audit({"action": "INSTALL_SOFTWARE", "params": {"package_id": p}, "ticket_id": req.ticket_id,
@@ -211,7 +214,7 @@ def install_software(req: SoftwareRequest):
     action_id = str(uuid.uuid4())
     _JOBS[action_id] = {"action_id": action_id, "action": "INSTALL_SOFTWARE", "params": {"package_id": p},
                         "ticket_id": req.ticket_id, "status": "RUNNING", "started": _now()}
-    threading.Thread(target=_install_job, args=(action_id, req), daemon=True).start()
+    threading.Thread(target=_install_job, args=(action_id, req, exp), daemon=True).start()
     return _JOBS[action_id]
 
 

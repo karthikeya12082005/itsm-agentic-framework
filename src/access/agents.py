@@ -117,12 +117,13 @@ def grounded(target: str | None, text: str) -> bool:
 MAX_GRANT_HOURS = 720                     # time-limited grants are capped at 30 days (item 3.3)
 _NUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
         "eight": 8, "nine": 9, "ten": 10, "twelve": 12, "fourteen": 14, "thirty": 30}
-_UNIT = {"h": 1, "hr": 1, "hrs": 1, "hour": 1, "hours": 1, "day": 24, "days": 24, "week": 168, "weeks": 168,
+_UNIT = {"min": 1 / 60, "mins": 1 / 60, "minute": 1 / 60, "minutes": 1 / 60,
+         "h": 1, "hr": 1, "hrs": 1, "hour": 1, "hours": 1, "day": 24, "days": 24, "week": 168, "weeks": 168,
          "month": 720, "months": 720}
 DURATION_RE = re.compile(r"\b(?:for|during|over)\s+(?:the\s+next\s+|the\s+|next\s+)?(\d+(?:\.\d+)?|" + "|".join(_NUM)
-                         + r")\s*(h|hrs?|hours?|days?|weeks?|months?)\b", re.I)
+                         + r")\s*(minutes?|mins?|h|hrs?|hours?|days?|weeks?|months?)\b", re.I)
 TODAY_RE = re.compile(r"\b(?:for\s+today|today\s+only|just\s+today|for\s+the\s+day)\b", re.I)
-TIME_WORDS = re.compile(r"\b(?:hours?|days?|weeks?|months?|today|tomorrow|temporar\w*)\b", re.I)
+TIME_WORDS = re.compile(r"\b(?:minutes?|hours?|days?|weeks?|months?|today|tomorrow|temporar\w*)\b", re.I)
 
 
 def parse_duration(text: str) -> float | None:
@@ -206,7 +207,7 @@ def understanding(state, retriever=None, use_llm=True):
     note = (f"target={target} ({'managed' if known else 'NOT in catalogue'}); kind={ex['request_kind']}; "
             f"extraction={ex['method']}"
             + (f"; rule reading={ex['rules_target']}" if ex["rules_target"] != target else "")
-            + (f"; time-limited: {u['duration_hours']:g} h" + (f" (capped from {dur:g} h)" if dur > MAX_GRANT_HOURS
+            + (f"; time-limited: {u['duration_hours']:.3g} h" + (f" (capped from {dur:.3g} h)" if dur > MAX_GRANT_HOURS
                                                                 else "") if dur else "")
             + (f"; {u['ticket_type']}/{u['category']}/{u['subcategory']}; policy {u['policy_id']}" if known else "")
             + (f"; k-NN confidence {u['confidence']}" if "confidence" in u else ""))
@@ -338,7 +339,7 @@ def execution(state):
             return _blocked(u, prev, blocking, "pre-check")
     attempts = prev + 1
     expires = None
-    if u["kind"] == "domain" and u.get("duration_hours"):
+    if u.get("duration_hours"):                 # domains: access revoked; installs: uninstalled when due
         expires = (datetime.now(timezone.utc) + timedelta(hours=u["duration_hours"])).isoformat(timespec="seconds")
     try:
         rec = endpoint_client.execute(u["kind"], u["target"], number, p["authorization_id"], expires_at=expires)

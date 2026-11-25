@@ -40,8 +40,10 @@ def execute(kind, target, ticket_id, authorization_id, expires_at=None):
         if expires_at:
             body["expires_at"] = expires_at
         return _call("POST", "/actions/allowlist_domain", json=body)
-    return _call("POST", "/actions/install_software",
-                 json={"package_id": target, "ticket_id": ticket_id, "authorization_id": authorization_id})
+    body = {"package_id": target, "ticket_id": ticket_id, "authorization_id": authorization_id}
+    if expires_at:
+        body["expires_at"] = expires_at
+    return _call("POST", "/actions/install_software", json=body)
 
 
 def precheck(package_id) -> list:

@@ -79,7 +79,10 @@ def template(f: dict) -> str:
     if f["outcome"] == "ESCALATED":
         return f"Your request for {label} needs review by the IT team ({f['reason']}). We will update you."
     what = "is now accessible in Chrome" if f["kind"] == "domain" else "has been installed"
-    until = f" until {f['access_until_utc']} UTC" if f.get("access_until_utc") else ""
+    until = ""
+    if f.get("access_until_utc"):
+        until = (f" until {f['access_until_utc']} UTC" if f["kind"] == "domain"
+                 else f"; it will be uninstalled automatically at {f['access_until_utc']} UTC as requested")
     return f"Done: {label} {what}{until}. Reason: {f['reason']}."
 
 

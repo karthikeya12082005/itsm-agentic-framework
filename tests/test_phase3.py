@@ -99,7 +99,8 @@ class TimeLimitedAccess(Base):                        # 3.3
     def test_duration_parsing(self):
         cases = {"I need github.com for 2 days": 48, "access to kaggle for the next 3 hours": 3,
                  "gemini for one week please": 168, "need gemini.google.com today only": 8,
-                 "need gemini.google.com": None, "for 2 months": 1440}
+                 "need gemini.google.com": None, "for 2 months": 1440,
+                 "gemini.google.com for 30 minutes please": 0.5}
         for text, hours in cases.items():
             self.assertEqual(agents.parse_duration(text), hours, text)
 
@@ -110,6 +111,12 @@ class TimeLimitedAccess(Base):                        # 3.3
         hours = (exp - datetime.now(timezone.utc)).total_seconds() / 3600
         self.assertAlmostEqual(hours, 48, delta=0.1)
         self.assertIn("until " + self.ep.expires[0][:10], self.src.get(n)["user_message"])
+
+    def test_time_limited_install_gets_expiry_and_says_uninstall(self):
+        n, final = self.run_ticket("Install the 7zip archiver for 3 days please")
+        self.assertEqual(final, "RESOLVED")
+        self.assertIsNotNone(self.ep.expires[0])                     # passed to the service -> /grants
+        self.assertIn("uninstalled automatically", self.src.get(n)["user_message"])
 
     def test_cap_at_30_days(self):
         n, _ = self.run_ticket("Please give me access to gemini.google.com for 3 months")

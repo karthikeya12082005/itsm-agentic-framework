@@ -235,12 +235,14 @@ def expire_grants(source, out=print) -> list[str]:
             out(f"{g['ticket_id']}: revoking {target} failed: {e}")
             continue
         done.append(g["ticket_id"])
-        out(f"{g['ticket_id']}: time-limited access to {target} expired -> revoked ({rec.get('status')})")
+        what = "uninstalled" if g.get("action") == "INSTALL_SOFTWARE" else "revoked"
+        out(f"{g['ticket_id']}: time-limited access to {target} expired -> {what} ({rec.get('status')})")
         try:
             source.add_note(g["ticket_id"], "Execution Agent", f"time-limited access to {target} expired at "
-                                                              f"{g['expires_at']} -> revoked (rollback "
+                                                              f"{g['expires_at']} -> {what} (rollback "
                                                               f"{rec.get('action_id')} of {g['action_id']})")
-            source.add_comment(g["ticket_id"], f"Your time-limited access to {target} has ended as requested. "
+            source.add_comment(g["ticket_id"], f"Your time-limited access to {target} has ended as requested "
+                                               f"({what}). "
                                                "Raise a new request if you need it again.")
         except Exception:  # noqa: BLE001 - ticket of another ticket source / deleted: the revoke still counts
             log.warning("could not note expiry on %s", g["ticket_id"])
