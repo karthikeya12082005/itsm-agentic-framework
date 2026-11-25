@@ -251,6 +251,8 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   close_code is a STRICT choice list (values contain an EN DASH, e.g. "Resolved – Permanent Fix Applied"; list
   via GET /api/now/ui/meta/incident). Any other value is silently blanked -> CLOSE_CODES in servicenow_client.
   Canceled (8) needs no code. Escalations go to the built-in group "Service Desk".
+- A Canceled (8) incident is read-only for ai.agent: any later PATCH (even a work note) -> HTTP 403 "ACL Exception
+  Update Failed". Write every note BEFORE cancelling (the worker already does).
 - Because of these silent drops, ServiceNowClient.create/update request back every field they write and raise
   ServiceNowFieldDropped if one came back blank (journal fields excluded).
 
@@ -276,8 +278,9 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   data/agent_state.db is unused since 2.8 (gitignored; can be deleted by the user).
 - Test incidents INC0010025-40 (selftest, live runs, sweep test) remain on the PDI, all closed or escalated.
   INC0010029 (Gemini) was ESCALATED by the LLM critic before the catalogue-note fix (expected then, see 2.6).
-  Exception: INC0010030 (github.com, Phase-2 test) is still On Hold / approval requested; `reset_demo.ps1
-  -CancelOpen` would cancel it (not done without the user's go-ahead). Demo tickets INC0010054-60 are closed.
+  INC0010030 (github.com, Phase-2 test, was On Hold) was cancelled at the user's request (Nov 25 2026); its
+  approval field stays "requested" (a canceled incident cannot be edited, see auth facts). Demo tickets
+  INC0010054-60 are closed. No agent ticket is open on the PDI.
 - k-NN confidence is low for real AI tool names (dataset uses fictional names) — decisions still correct.
 
 ---------------------------------------------------------------------------------------------------------------
