@@ -278,7 +278,6 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   INC0010029 (Gemini) was ESCALATED by the LLM critic before the catalogue-note fix (expected then, see 2.6).
   Exception: INC0010030 (github.com, Phase-2 test) is still On Hold / approval requested; `reset_demo.ps1
   -CancelOpen` would cancel it (not done without the user's go-ahead). Demo tickets INC0010054-60 are closed.
-- Clean-run clone D:\itsm-clean-test still exists (holds a .env copy) - delete it by hand.
 - k-NN confidence is low for real AI tool names (dataset uses fictional names) — decisions still correct.
 
 ---------------------------------------------------------------------------------------------------------------
@@ -582,7 +581,7 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
       live (5.3); dashboard from the clone 200 on all pages. Fixed: reset rolled back stale records (see 5.3);
       demo label. Notes: a second checkout has its own checkpoints (data/checkpoints), so `trace`/dashboard flow for
       INC0010055-60 exist only in the clone; lab ports are shared, stop one checkout's lab before starting another.
-      The clone folder D:\itsm-clean-test contains a .env copy: the user deletes it (Claude's delete was blocked).)
+      The clone folder D:\itsm-clean-test (it held a .env copy) was deleted by the user afterwards.)
 
 **Phase 5 COMPLETE (Nov 25 2026)** — branch phase-5-final merged into main. ALL TODO items done.
 
