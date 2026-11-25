@@ -1,0 +1,9 @@
+mode,rep,fault,gt_service,gt_root_cause,gt_action,incident,final,approved_by,decision,root_service,root_ok,top1,top1_ok,top3_ok,posterior,action,action_ok,attempts,rollbacks,resolved,lab_healthy,mttr_s,llm_used,critic,variant
+agentic,1,service_down,web,SOFTWARE_DEFECT,RESTART_SERVICE,RITM9000001,RESOLVED,,ALLOW,web,True,SOFTWARE_DEFECT,True,True,0.9862,RESTART_SERVICE,True,1,0,True,True,49.8,True,APPROVE,multi
+agentic,1,memory_leak,orders-api,RESOURCE_EXHAUSTION,RESTART_SERVICE,RITM9000002,RESOLVED,,ALLOW,orders-api,True,RESOURCE_EXHAUSTION,True,True,0.9795,RESTART_SERVICE,True,1,0,True,True,29.6,True,APPROVE,multi
+agentic,1,high_latency,cache,RESOURCE_EXHAUSTION,CLEAR_CACHE,RITM9000003,RESOLVED,,ALLOW,cache,True,RESOURCE_EXHAUSTION,True,True,0.6404,CLEAR_CACHE,True,1,0,True,True,37.0,True,APPROVE,multi
+agentic,1,disk_full,worker,CAPACITY_LIMIT,FREE_DISK_SPACE,RITM9000004,RESOLVED,,ALLOW,worker,True,CAPACITY_LIMIT,True,True,0.9436,FREE_DISK_SPACE,True,1,0,True,True,2.4,False,APPROVE,multi
+agentic,1,bad_config,orders-api,DEPLOYMENT_CHANGE,ROLLBACK_DEPLOYMENT,RITM9000005,RESOLVED,cab01,ALLOW_WITH_APPROVAL,orders-api,True,DEPLOYMENT_CHANGE,True,True,0.8498,ROLLBACK_DEPLOYMENT,True,1,0,True,True,2.6,False,APPROVE,multi
+agentic,1,cert_expired,web,CERTIFICATE_EXPIRY,RENEW_CERTIFICATE,RITM9000006,RESOLVED,serviceowner01,ALLOW_WITH_APPROVAL,web,True,CERTIFICATE_EXPIRY,True,True,0.9973,RENEW_CERTIFICATE,True,1,0,True,True,5.5,False,APPROVE,multi
+agentic,1,db_pool_exhausted,orders-api,CONFIGURATION_ERROR,TERMINATE_DB_SESSIONS,RITM9000007,RESOLVED,appowner01,ALLOW_WITH_APPROVAL,orders-api,True,CONFIGURATION_ERROR,True,True,0.9996,TERMINATE_DB_SESSIONS,True,1,0,True,True,2.5,False,APPROVE,multi
+agentic,1,dependency_down,orders-api,DEPENDENCY_FAILURE,RESTART_SERVICE,RITM9000008,RESOLVED,serviceowner01,ALLOW_WITH_APPROVAL,orders-api,True,DEPENDENCY_FAILURE,True,True,0.9238,RESTART_SERVICE,True,1,0,True,True,43.2,False,APPROVE,multi

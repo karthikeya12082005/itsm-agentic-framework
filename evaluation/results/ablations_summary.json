@@ -1,0 +1,939 @@
+{
+ "latency": {
+  "calls_logged": 3085,
+  "first": "2026-11-24T23:18:48",
+  "last": "2026-11-25T17:15:23",
+  "per_model": {
+   "gemini:gemini-3.5-flash": {
+    "attempts": 220,
+    "called": 48,
+    "answered": 23,
+    "success_rate_of_called": 0.479,
+    "latency_median_s": 2.01,
+    "latency_p90_s": 6.87,
+    "latency_mean_s": 3.01,
+    "errors": {
+     "timeout": 8,
+     "skipped_cooldown": 172,
+     "http_429": 17
+    }
+   },
+   "gemini:gemini-3.5-flash-lite": {
+    "attempts": 627,
+    "called": 327,
+    "answered": 293,
+    "success_rate_of_called": 0.896,
+    "latency_median_s": 1.46,
+    "latency_p90_s": 4.61,
+    "latency_mean_s": 2.04,
+    "errors": {
+     "http_503": 25,
+     "skipped_cooldown": 300,
+     "other": 1,
+     "timeout": 6,
+     "http_429": 1,
+     "invalid_output": 1
+    }
+   },
+   "groq:no-such-model-xyz": {
+    "attempts": 2,
+    "called": 1,
+    "answered": 0,
+    "success_rate_of_called": 0.0,
+    "latency_median_s": null,
+    "latency_p90_s": null,
+    "latency_mean_s": null,
+    "errors": {
+     "http_404": 1,
+     "skipped_cooldown": 1
+    }
+   },
+   "groq:openai/gpt-oss-120b": {
+    "attempts": 723,
+    "called": 318,
+    "answered": 271,
+    "success_rate_of_called": 0.852,
+    "latency_median_s": 0.99,
+    "latency_p90_s": 1.46,
+    "latency_mean_s": 1.12,
+    "errors": {
+     "http_429": 46,
+     "skipped_cooldown": 405,
+     "timeout": 1
+    }
+   },
+   "groq:openai/gpt-oss-20b": {
+    "attempts": 643,
+    "called": 489,
+    "answered": 481,
+    "success_rate_of_called": 0.984,
+    "latency_median_s": 0.92,
+    "latency_p90_s": 1.11,
+    "latency_mean_s": 0.9,
+    "errors": {
+     "other": 1,
+     "skipped_cooldown": 154,
+     "invalid_output": 3,
+     "http_429": 4
+    }
+   },
+   "groq:qwen/qwen3.8-27b": {
+    "attempts": 633,
+    "called": 570,
+    "answered": 562,
+    "success_rate_of_called": 0.986,
+    "latency_median_s": 0.78,
+    "latency_p90_s": 1.06,
+    "latency_mean_s": 0.82,
+    "errors": {
+     "timeout": 2,
+     "skipped_cooldown": 63,
+     "http_429": 5,
+     "invalid_output": 1
+    }
+   },
+   "ollama:llama3.2:3b": {
+    "attempts": 5,
+    "called": 5,
+    "answered": 5,
+    "success_rate_of_called": 1.0,
+    "latency_median_s": 4.14,
+    "latency_p90_s": 5.51,
+    "latency_mean_s": 4.34,
+    "errors": {}
+   }
+  },
+  "usage": {
+   "communication": {
+    "calls": 561,
+    "llm_primary": 477,
+    "llm_secondary": 10,
+    "fallback_rules": 74
+   },
+   "critic": {
+    "calls": 317,
+    "llm_primary": 75,
+    "llm_secondary": 109,
+    "fallback_rules": 133
+   },
+   "rca": {
+    "calls": 542,
+    "llm_primary": 181,
+    "llm_secondary": 152,
+    "fallback_rules": 209
+   },
+   "retrieval": {
+    "calls": 341,
+    "llm_primary": 173,
+    "llm_secondary": 123,
+    "fallback_rules": 45
+   },
+   "understanding": {
+    "calls": 388,
+    "llm_primary": 335,
+    "fallback_rules": 53
+   },
+   "_all": {
+    "calls": 2149,
+    "llm_primary": 1241,
+    "fallback_rules": 514,
+    "llm_secondary": 394
+   },
+   "_answered_share": 0.761
+  }
+ },
+ "generated": "2026-11-25T17:16:14",
+ "incident": {
+  "rules": {
+   "runs": 8,
+   "detected": 8,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 1.0,
+   "rca_top3": 1.0,
+   "action_accuracy": 1.0,
+   "resolution_rate": 1.0,
+   "escalation_rate": 0.0,
+   "approval_rate": 0.5,
+   "mttr_s_mean": 19.8,
+   "mttr_s_median": 15.8,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [],
+   "variant": "rules",
+   "mode": "rules",
+   "retrieval": true,
+   "wall_min": 6.7,
+   "llm": {
+    "_all": {},
+    "_answered_share": null
+   },
+   "latency": {}
+  },
+  "rules-noret": {
+   "runs": 8,
+   "detected": 8,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 1.0,
+   "rca_top3": 1.0,
+   "action_accuracy": 1.0,
+   "resolution_rate": 1.0,
+   "escalation_rate": 0.0,
+   "approval_rate": 0.5,
+   "mttr_s_mean": 18.2,
+   "mttr_s_median": 14.4,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [],
+   "variant": "rules-noret",
+   "mode": "rules",
+   "retrieval": false,
+   "wall_min": 6.0,
+   "llm": {
+    "_all": {},
+    "_answered_share": null
+   },
+   "latency": {}
+  },
+  "multi": {
+   "runs": 8,
+   "detected": 8,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 1.0,
+   "rca_top3": 1.0,
+   "action_accuracy": 1.0,
+   "resolution_rate": 1.0,
+   "escalation_rate": 0.0,
+   "approval_rate": 0.5,
+   "mttr_s_mean": 21.6,
+   "mttr_s_median": 17.6,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [],
+   "variant": "multi",
+   "mode": "agentic",
+   "retrieval": true,
+   "wall_min": 9.7,
+   "llm": {
+    "communication": {
+     "calls": 8,
+     "llm_primary": 8
+    },
+    "critic": {
+     "calls": 8,
+     "fallback_rules": 8
+    },
+    "rca": {
+     "calls": 12,
+     "llm_primary": 3,
+     "llm_secondary": 3,
+     "fallback_rules": 6
+    },
+    "_all": {
+     "calls": 28,
+     "llm_primary": 11,
+     "llm_secondary": 3,
+     "fallback_rules": 14
+    },
+    "_answered_share": 0.5
+   },
+   "latency": {
+    "gemini:gemini-3.5-flash": {
+     "attempts": 8,
+     "called": 2,
+     "answered": 0,
+     "success_rate_of_called": 0.0,
+     "latency_median_s": null,
+     "latency_p90_s": null,
+     "latency_mean_s": null,
+     "errors": {
+      "skipped_cooldown": 6,
+      "http_429": 2
+     }
+    },
+    "gemini:gemini-3.5-flash-lite": {
+     "attempts": 9,
+     "called": 5,
+     "answered": 3,
+     "success_rate_of_called": 0.6,
+     "latency_median_s": 2.2,
+     "latency_p90_s": 2.28,
+     "latency_mean_s": 2.12,
+     "errors": {
+      "http_503": 2,
+      "skipped_cooldown": 4
+     }
+    },
+    "groq:openai/gpt-oss-120b": {
+     "attempts": 20,
+     "called": 5,
+     "answered": 3,
+     "success_rate_of_called": 0.6,
+     "latency_median_s": 1.16,
+     "latency_p90_s": 1.26,
+     "latency_mean_s": 1.1,
+     "errors": {
+      "http_429": 2,
+      "skipped_cooldown": 15
+     }
+    },
+    "groq:qwen/qwen3.8-27b": {
+     "attempts": 8,
+     "called": 8,
+     "answered": 8,
+     "success_rate_of_called": 1.0,
+     "latency_median_s": 0.62,
+     "latency_p90_s": 1.04,
+     "latency_mean_s": 0.63,
+     "errors": {}
+    }
+   }
+  },
+  "multi-noret": {
+   "runs": 8,
+   "detected": 8,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 1.0,
+   "rca_top3": 1.0,
+   "action_accuracy": 1.0,
+   "resolution_rate": 1.0,
+   "escalation_rate": 0.0,
+   "approval_rate": 0.5,
+   "mttr_s_mean": 21.7,
+   "mttr_s_median": 14.4,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [],
+   "variant": "multi-noret",
+   "mode": "agentic",
+   "retrieval": false,
+   "wall_min": 9.8,
+   "llm": {
+    "communication": {
+     "calls": 8,
+     "llm_primary": 8
+    },
+    "critic": {
+     "calls": 8,
+     "fallback_rules": 7,
+     "llm_secondary": 1
+    },
+    "rca": {
+     "calls": 9,
+     "llm_primary": 1,
+     "fallback_rules": 8
+    },
+    "_all": {
+     "calls": 25,
+     "llm_primary": 9,
+     "fallback_rules": 15,
+     "llm_secondary": 1
+    },
+    "_answered_share": 0.4
+   },
+   "latency": {
+    "gemini:gemini-3.5-flash": {
+     "attempts": 8,
+     "called": 2,
+     "answered": 0,
+     "success_rate_of_called": 0.0,
+     "latency_median_s": null,
+     "latency_p90_s": null,
+     "latency_mean_s": null,
+     "errors": {
+      "skipped_cooldown": 6,
+      "http_429": 2
+     }
+    },
+    "gemini:gemini-3.5-flash-lite": {
+     "attempts": 8,
+     "called": 3,
+     "answered": 0,
+     "success_rate_of_called": 0.0,
+     "latency_median_s": null,
+     "latency_p90_s": null,
+     "latency_mean_s": null,
+     "errors": {
+      "http_503": 3,
+      "skipped_cooldown": 5
+     }
+    },
+    "groq:openai/gpt-oss-120b": {
+     "attempts": 17,
+     "called": 3,
+     "answered": 2,
+     "success_rate_of_called": 0.667,
+     "latency_median_s": 1.18,
+     "latency_p90_s": 1.43,
+     "latency_mean_s": 1.18,
+     "errors": {
+      "http_429": 1,
+      "skipped_cooldown": 14
+     }
+    },
+    "groq:qwen/qwen3.8-27b": {
+     "attempts": 8,
+     "called": 8,
+     "answered": 8,
+     "success_rate_of_called": 1.0,
+     "latency_median_s": 0.62,
+     "latency_p90_s": 0.95,
+     "latency_mean_s": 0.63,
+     "errors": {}
+    }
+   }
+  },
+  "single(openai/gpt-oss-20b)": {
+   "runs": 8,
+   "detected": 8,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 0.875,
+   "rca_top3": 1.0,
+   "action_accuracy": 1.0,
+   "resolution_rate": 0.875,
+   "escalation_rate": 0.125,
+   "approval_rate": 0.375,
+   "mttr_s_mean": 24.0,
+   "mttr_s_median": 7.5,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [
+    "memory_leak#1:ESCALATED"
+   ],
+   "variant": "single(openai/gpt-oss-20b)",
+   "mode": "single:groq:openai/gpt-oss-20b",
+   "retrieval": true,
+   "wall_min": 10.0,
+   "llm": {
+    "communication": {
+     "calls": 8,
+     "llm_primary": 8
+    },
+    "critic": {
+     "calls": 7,
+     "llm_primary": 7
+    },
+    "rca": {
+     "calls": 23,
+     "llm_primary": 23
+    },
+    "_all": {
+     "calls": 38,
+     "llm_primary": 38
+    },
+    "_answered_share": 1.0
+   },
+   "latency": {
+    "groq:openai/gpt-oss-20b": {
+     "attempts": 41,
+     "called": 41,
+     "answered": 38,
+     "success_rate_of_called": 0.927,
+     "latency_median_s": 0.91,
+     "latency_p90_s": 1.14,
+     "latency_mean_s": 0.92,
+     "errors": {
+      "invalid_output": 1,
+      "http_429": 2
+     }
+    }
+   }
+  },
+  "single(qwen/qwen3.8-27b)": {
+   "runs": 8,
+   "detected": 8,
+   "root_service_accuracy": 1.0,
+   "rca_top1": 1.0,
+   "rca_top3": 1.0,
+   "action_accuracy": 1.0,
+   "resolution_rate": 1.0,
+   "escalation_rate": 0.0,
+   "approval_rate": 0.5,
+   "mttr_s_mean": 21.4,
+   "mttr_s_median": 16.2,
+   "rollbacks": 0,
+   "lab_healthy_after_resolved": 1.0,
+   "misses": [],
+   "variant": "single(qwen/qwen3.8-27b)",
+   "mode": "single:groq:qwen/qwen3.8-27b",
+   "retrieval": true,
+   "wall_min": 7.9,
+   "llm": {
+    "communication": {
+     "calls": 8,
+     "llm_primary": 2,
+     "fallback_rules": 6
+    },
+    "critic": {
+     "calls": 8,
+     "llm_primary": 2,
+     "fallback_rules": 6
+    },
+    "rca": {
+     "calls": 13,
+     "llm_primary": 7,
+     "fallback_rules": 6
+    },
+    "_all": {
+     "calls": 29,
+     "llm_primary": 11,
+     "fallback_rules": 18
+    },
+    "_answered_share": 0.379
+   },
+   "latency": {
+    "groq:qwen/qwen3.8-27b": {
+     "attempts": 30,
+     "called": 13,
+     "answered": 11,
+     "success_rate_of_called": 0.846,
+     "latency_median_s": 0.99,
+     "latency_p90_s": 1.38,
+     "latency_mean_s": 1.42,
+     "errors": {
+      "invalid_output": 1,
+      "http_429": 1,
+      "skipped_cooldown": 17
+     }
+    }
+   }
+  }
+ },
+ "rewrite": {
+  "requests": 48,
+  "rewritten_by_llm": 48,
+  "raw": {
+   "sop_hit1": 0.438,
+   "sop_hit3": 0.875,
+   "sop_mrr10": 0.651,
+   "policy_hit1": 0.312,
+   "policy_hit3": 0.896,
+   "policy_mrr10": 0.566
+  },
+  "llm": {
+   "sop_hit1": 0.604,
+   "sop_hit3": 0.896,
+   "sop_mrr10": 0.764,
+   "policy_hit1": 0.417,
+   "policy_hit3": 0.854,
+   "policy_mrr10": 0.633
+  },
+  "raw_on_rewritten_subset": {
+   "sop_hit1": 0.438,
+   "sop_hit3": 0.875,
+   "sop_mrr10": 0.651,
+   "policy_hit1": 0.312,
+   "policy_hit3": 0.896,
+   "policy_mrr10": 0.566
+  },
+  "llm_on_rewritten_subset": {
+   "sop_hit1": 0.604,
+   "sop_hit3": 0.896,
+   "sop_mrr10": 0.764,
+   "policy_hit1": 0.417,
+   "policy_hit3": 0.854,
+   "policy_mrr10": 0.633
+  },
+  "llm_usage": {
+   "retrieval": {
+    "calls": 48,
+    "llm_primary": 7,
+    "llm_secondary": 41
+   },
+   "_all": {
+    "calls": 48,
+    "llm_primary": 7,
+    "llm_secondary": 41
+   },
+   "_answered_share": 1.0
+  }
+ },
+ "access": {
+  "rules": {
+   "requests": 52,
+   "target_accuracy": 0.981,
+   "decision_exact_match": 0.981,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.846,
+   "escalation_rate": 0.135,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.0,
+   "mttr_s": 0.5,
+   "mean_processing_s": 0.42,
+   "llm_fallback_share": 1.0,
+   "mismatches": [
+    "R51"
+   ],
+   "variant": "rules",
+   "mode": "rules",
+   "retrieval": true,
+   "wall_min": 0.4,
+   "llm": {
+    "_all": {},
+    "_answered_share": null
+   },
+   "latency": {}
+  },
+  "rules-noret": {
+   "requests": 52,
+   "target_accuracy": 0.981,
+   "decision_exact_match": 0.981,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.846,
+   "escalation_rate": 0.135,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.0,
+   "mttr_s": 0.11,
+   "mean_processing_s": 0.1,
+   "llm_fallback_share": 1.0,
+   "mismatches": [
+    "R51"
+   ],
+   "variant": "rules-noret",
+   "mode": "rules",
+   "retrieval": false,
+   "wall_min": 0.1,
+   "llm": {
+    "_all": {},
+    "_answered_share": null
+   },
+   "latency": {}
+  },
+  "multi": {
+   "requests": 52,
+   "target_accuracy": 0.981,
+   "decision_exact_match": 0.981,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.827,
+   "escalation_rate": 0.154,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.02,
+   "mttr_s": 4.74,
+   "mean_processing_s": 4.37,
+   "llm_fallback_share": 0.388,
+   "mismatches": [
+    "R51"
+   ],
+   "variant": "multi",
+   "mode": "agentic",
+   "retrieval": true,
+   "wall_min": 9.2,
+   "llm": {
+    "communication": {
+     "calls": 66,
+     "llm_primary": 54,
+     "llm_secondary": 10,
+     "fallback_rules": 2
+    },
+    "critic": {
+     "calls": 31,
+     "llm_secondary": 3,
+     "fallback_rules": 28
+    },
+    "retrieval": {
+     "calls": 46,
+     "llm_primary": 16,
+     "llm_secondary": 30
+    },
+    "understanding": {
+     "calls": 51,
+     "llm_primary": 50,
+     "fallback_rules": 1
+    },
+    "_all": {
+     "calls": 194,
+     "llm_primary": 120,
+     "fallback_rules": 31,
+     "llm_secondary": 43
+    },
+    "_answered_share": 0.84
+   },
+   "latency": {
+    "gemini:gemini-3.5-flash": {
+     "attempts": 31,
+     "called": 2,
+     "answered": 0,
+     "success_rate_of_called": 0.0,
+     "latency_median_s": null,
+     "latency_p90_s": null,
+     "latency_mean_s": null,
+     "errors": {
+      "skipped_cooldown": 29,
+      "http_429": 2
+     }
+    },
+    "gemini:gemini-3.5-flash-lite": {
+     "attempts": 59,
+     "called": 29,
+     "answered": 26,
+     "success_rate_of_called": 0.897,
+     "latency_median_s": 1.62,
+     "latency_p90_s": 2.95,
+     "latency_mean_s": 1.97,
+     "errors": {
+      "timeout": 3,
+      "skipped_cooldown": 30
+     }
+    },
+    "groq:openai/gpt-oss-120b": {
+     "attempts": 31,
+     "called": 5,
+     "answered": 3,
+     "success_rate_of_called": 0.6,
+     "latency_median_s": 1.2,
+     "latency_p90_s": 1.36,
+     "latency_mean_s": 1.15,
+     "errors": {
+      "http_429": 2,
+      "skipped_cooldown": 26
+     }
+    },
+    "groq:openai/gpt-oss-20b": {
+     "attempts": 82,
+     "called": 82,
+     "answered": 80,
+     "success_rate_of_called": 0.976,
+     "latency_median_s": 0.99,
+     "latency_p90_s": 1.13,
+     "latency_mean_s": 1.01,
+     "errors": {
+      "invalid_output": 2
+     }
+    },
+    "groq:qwen/qwen3.8-27b": {
+     "attempts": 66,
+     "called": 55,
+     "answered": 54,
+     "success_rate_of_called": 0.982,
+     "latency_median_s": 0.78,
+     "latency_p90_s": 1.1,
+     "latency_mean_s": 0.88,
+     "errors": {
+      "timeout": 1,
+      "skipped_cooldown": 11
+     }
+    }
+   }
+  },
+  "multi-noret": {
+   "requests": 52,
+   "target_accuracy": 0.981,
+   "decision_exact_match": 0.981,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.827,
+   "escalation_rate": 0.154,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.0,
+   "mttr_s": 2.19,
+   "mean_processing_s": 1.93,
+   "llm_fallback_share": 0.22,
+   "mismatches": [
+    "R51"
+   ],
+   "variant": "multi-noret",
+   "mode": "agentic",
+   "retrieval": false,
+   "wall_min": 7.2,
+   "llm": {
+    "communication": {
+     "calls": 66,
+     "llm_primary": 66
+    },
+    "critic": {
+     "calls": 31,
+     "fallback_rules": 31
+    },
+    "understanding": {
+     "calls": 51,
+     "llm_primary": 51
+    },
+    "_all": {
+     "calls": 148,
+     "llm_primary": 117,
+     "fallback_rules": 31
+    },
+    "_answered_share": 0.791
+   },
+   "latency": {
+    "gemini:gemini-3.5-flash": {
+     "attempts": 31,
+     "called": 2,
+     "answered": 0,
+     "success_rate_of_called": 0.0,
+     "latency_median_s": null,
+     "latency_p90_s": null,
+     "latency_mean_s": null,
+     "errors": {
+      "skipped_cooldown": 29,
+      "http_429": 2
+     }
+    },
+    "groq:openai/gpt-oss-120b": {
+     "attempts": 31,
+     "called": 2,
+     "answered": 0,
+     "success_rate_of_called": 0.0,
+     "latency_median_s": null,
+     "latency_p90_s": null,
+     "latency_mean_s": null,
+     "errors": {
+      "http_429": 2,
+      "skipped_cooldown": 29
+     }
+    },
+    "groq:openai/gpt-oss-20b": {
+     "attempts": 51,
+     "called": 51,
+     "answered": 51,
+     "success_rate_of_called": 1.0,
+     "latency_median_s": 0.92,
+     "latency_p90_s": 1.09,
+     "latency_mean_s": 0.9,
+     "errors": {}
+    },
+    "groq:qwen/qwen3.8-27b": {
+     "attempts": 66,
+     "called": 66,
+     "answered": 66,
+     "success_rate_of_called": 1.0,
+     "latency_median_s": 0.78,
+     "latency_p90_s": 1.05,
+     "latency_mean_s": 0.86,
+     "errors": {}
+    }
+   }
+  },
+  "single(openai/gpt-oss-20b)": {
+   "requests": 52,
+   "target_accuracy": 0.981,
+   "decision_exact_match": 0.981,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.846,
+   "escalation_rate": 0.135,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.0,
+   "mttr_s": 1.39,
+   "mean_processing_s": 1.22,
+   "llm_fallback_share": 0.797,
+   "mismatches": [
+    "R51"
+   ],
+   "variant": "single(openai/gpt-oss-20b)",
+   "mode": "single:groq:openai/gpt-oss-20b",
+   "retrieval": true,
+   "wall_min": 6.3,
+   "llm": {
+    "communication": {
+     "calls": 66,
+     "llm_primary": 12,
+     "fallback_rules": 54
+    },
+    "critic": {
+     "calls": 31,
+     "llm_primary": 4,
+     "fallback_rules": 27
+    },
+    "retrieval": {
+     "calls": 47,
+     "llm_primary": 12,
+     "fallback_rules": 35
+    },
+    "understanding": {
+     "calls": 51,
+     "llm_primary": 12,
+     "fallback_rules": 39
+    },
+    "_all": {
+     "calls": 195,
+     "llm_primary": 40,
+     "fallback_rules": 155
+    },
+    "_answered_share": 0.205
+   },
+   "latency": {
+    "groq:openai/gpt-oss-20b": {
+     "attempts": 195,
+     "called": 42,
+     "answered": 40,
+     "success_rate_of_called": 0.952,
+     "latency_median_s": 0.98,
+     "latency_p90_s": 1.11,
+     "latency_mean_s": 0.96,
+     "errors": {
+      "http_429": 2,
+      "skipped_cooldown": 153
+     }
+    }
+   }
+  },
+  "single(qwen/qwen3.8-27b)": {
+   "requests": 52,
+   "target_accuracy": 0.962,
+   "decision_exact_match": 0.962,
+   "first_final_state_match": 0.981,
+   "automation_rate": 0.827,
+   "escalation_rate": 0.154,
+   "approval_rate": 0.288,
+   "verification_pass_rate": 1.0,
+   "mtta_s": 0.02,
+   "mttr_s": 3.51,
+   "mean_processing_s": 3.12,
+   "llm_fallback_share": 0.196,
+   "mismatches": [
+    "R51"
+   ],
+   "variant": "single(qwen/qwen3.8-27b)",
+   "mode": "single:groq:qwen/qwen3.8-27b",
+   "retrieval": true,
+   "wall_min": 13.3,
+   "llm": {
+    "communication": {
+     "calls": 66,
+     "llm_primary": 54,
+     "fallback_rules": 12
+    },
+    "critic": {
+     "calls": 30,
+     "fallback_rules": 5,
+     "llm_primary": 25
+    },
+    "retrieval": {
+     "calls": 45,
+     "llm_primary": 35,
+     "fallback_rules": 10
+    },
+    "understanding": {
+     "calls": 51,
+     "llm_primary": 42,
+     "fallback_rules": 9
+    },
+    "_all": {
+     "calls": 192,
+     "llm_primary": 156,
+     "fallback_rules": 36
+    },
+    "_answered_share": 0.812
+   },
+   "latency": {
+    "groq:qwen/qwen3.8-27b": {
+     "attempts": 196,
+     "called": 161,
+     "answered": 156,
+     "success_rate_of_called": 0.969,
+     "latency_median_s": 0.79,
+     "latency_p90_s": 1.12,
+     "latency_mean_s": 0.83,
+     "errors": {
+      "timeout": 1,
+      "skipped_cooldown": 35,
+      "http_429": 4
+     }
+    }
+   }
+  }
+ }
+}

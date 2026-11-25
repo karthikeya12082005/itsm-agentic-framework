@@ -67,8 +67,8 @@ def verify(kind, target):
     return bool(_call("GET", f"/verify/software/{target}")["installed"])
 
 
-def status():
-    return _call("GET", "/status")
+def status(timeout=120):
+    return _call("GET", "/status", timeout=timeout)
 
 
 def rollback(action_id, ticket_id):

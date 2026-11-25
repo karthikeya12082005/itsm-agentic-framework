@@ -382,14 +382,16 @@ class ServiceNowSource(TicketSource):
 
     def list(self, limit=20):
         me = self.sn.user
-        rows = self.sn.query("incident", f"category={ACCESS_CATEGORY}^sys_created_by={me}"
-                                         f"^ORassignment_group={self._group(AGENT_GROUP)}",
-                             "number,state,approval,assignment_group,caller_id.user_name,sys_created_on,resolved_at",
-                             limit=limit, order_by="-number")
+        # access requests AND monitoring incidents (Objective 3): everything the agents created or own.
+        # (ServiceNow's ^OR binds to the condition before it only, so no category condition here.)
+        rows = self.sn.query("incident", f"sys_created_by={me}^ORassignment_group={self._group(AGENT_GROUP)}",
+                             "number,state,approval,category,assignment_group,caller_id.user_name,sys_created_on,"
+                             "resolved_at", limit=limit, order_by="-number")
         out = []
         for r in rows:
             st = self._summary(r["number"])
             out.append({"number": r["number"], "requester": r.get("caller_id.user_name", ""),
+                        "category": r.get("category") or "",
                         "state": self._status(r), "decision": st.get("decision"), "target": st.get("target"),
                         "created_at": r["sys_created_on"], "resolved_at": r.get("resolved_at") or None})
         return out
