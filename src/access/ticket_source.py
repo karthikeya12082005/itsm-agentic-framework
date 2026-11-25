@@ -14,6 +14,7 @@ Neutral ticket statuses used by agents/worker/CLI and how ServiceNowSource store
   RESOLVED            state 6 Resolved, close_code "Resolved – Permanent Fix Applied", close_notes = message
   CLOSED_REJECTED     state 8 Canceled, close_notes = reason (policy DENY or approver rejected)
   ESCALATED           state 2 In Progress, reassigned to the human group "Service Desk"
+  WAITING_FOR_USER    state 3 On Hold + hold_reason 1 "Awaiting Caller" (e.g. close VS Code, item 3.1)
 
 The agents' structured context (decision, policy, evidence, critic, trace) lives in the LangGraph checkpoint
 of the ticket's thread (src/orchestrator/checkpoint.py, item 2.8; thread_id = thread_id(number)). Sources read
@@ -36,7 +37,9 @@ from src.access.store import TicketStore, now
 from src.orchestrator import checkpoint as cp
 from src.orchestrator.trace import as_note, format_step
 
-STATUSES = ("NEW", "IN_PROGRESS", "AWAITING_APPROVAL", "RESOLVED", "CLOSED_REJECTED", "ESCALATED")
+STATUSES = ("NEW", "IN_PROGRESS", "AWAITING_APPROVAL", "RESOLVED", "CLOSED_REJECTED", "ESCALATED",
+            "WAITING_FOR_USER")
+ACTIVE = ("IN_PROGRESS", "WAITING_FOR_USER")       # tickets the worker tends (jobs, user actions, stuck runs)
 CLOSED = {"RESOLVED", "CLOSED_REJECTED"}
 CONTEXT_KEYS = ("understanding", "evidence", "policy", "critic", "execution", "attempts", "verified")
 
@@ -93,8 +96,12 @@ class TicketSource(ABC):
         """User names allowed to approve for a policy approver_role on this ticket."""
 
     @abstractmethod
+    def fetch_active(self) -> list[dict]:
+        """Agent tickets IN_PROGRESS or WAITING_FOR_USER: [{number, state, age_s}] (age = since last update)."""
+
     def fetch_stuck(self, older_than_s: float = 600) -> list[str]:
         """IN_PROGRESS tickets of the agents not touched for older_than_s seconds (crashed / unsaved runs)."""
+        return [t["number"] for t in self.fetch_active() if t["state"] == "IN_PROGRESS" and t["age_s"] >= older_than_s]
 
     def link(self, number: str) -> str:
         return ""
@@ -177,10 +184,15 @@ class LocalSource(TicketSource):
         t["category"] = "access"
         return t
 
-    def fetch_stuck(self, older_than_s=600):
-        limit = (datetime.now(timezone.utc) - timedelta(seconds=older_than_s)).isoformat(timespec="seconds")
-        return [r["number"] for r in reversed(self.store.list(100000)) if r["state"] == "IN_PROGRESS"
-                and (self.store.get(r["number"]).get("acknowledged_at") or "") <= limit]
+    def fetch_active(self):
+        now_ = datetime.now(timezone.utc)
+        out = []
+        for r in reversed(self.store.list(100000)):
+            if r["state"] in ACTIVE:
+                ack = self.store.get(r["number"]).get("acknowledged_at")
+                age = (now_ - datetime.fromisoformat(ack)).total_seconds() if ack else 10 ** 9
+                out.append({"number": r["number"], "state": r["state"], "age_s": age})
+        return out
 
     def list(self, limit=20):
         return self.store.list(limit)
@@ -228,7 +240,8 @@ class LocalSource(TicketSource):
 AGENT_GROUP = "AI Service Desk"
 ESCALATION_GROUP = "Service Desk"
 ACCESS_CATEGORY = "access"
-SN_FIELDS = ("sys_id,number,short_description,description,state,approval,assignment_group,caller_id,category,"
+SN_FIELDS = ("sys_id,number,short_description,description,state,approval,hold_reason,assignment_group,caller_id,"
+             "category,"
              "caller_id.user_name,caller_id.title,caller_id.manager.user_name,sys_created_on,resolved_at")
 SN_APPROVAL = {"requested": "PENDING", "approved": "APPROVED", "rejected": "REJECTED"}
 # Our work notes: "[#<seq> <agent>] text". ServiceNow journal timestamps have 1-second resolution, so notes
@@ -306,7 +319,10 @@ class ServiceNowSource(TicketSource):
         if s == "2":
             return "IN_PROGRESS" if r["assignment_group"] == self._group(AGENT_GROUP) else "ESCALATED"
         if s == "3":
-            return "AWAITING_APPROVAL" if r["approval"] == "requested" else "ON_HOLD"
+            if r.get("approval") == "requested":
+                return "AWAITING_APPROVAL"
+            # hold_reason (this PDI's field name; not on_hold_reason): 1 = Awaiting Caller
+            return "WAITING_FOR_USER" if r.get("hold_reason") == "1" else "ON_HOLD"
         if s in ("6", "7"):
             return "RESOLVED"
         if s == "8":
@@ -365,15 +381,18 @@ class ServiceNowSource(TicketSource):
             self._cache[f"inc:{r['number']}"] = r["sys_id"]
         return [r["number"] for r in rows]
 
-    def fetch_stuck(self, older_than_s=600):
-        rows = self.sn.query("incident", f"assignment_group={self._group(AGENT_GROUP)}^state=2",
-                             "sys_id,number,sys_updated_on", limit=100, order_by="sys_updated_on")
-        limit = (datetime.now(timezone.utc) - timedelta(seconds=older_than_s)).strftime("%Y-%m-%d %H:%M:%S")
+    def fetch_active(self):
+        rows = self.sn.query("incident", f"assignment_group={self._group(AGENT_GROUP)}^stateIN2,3",
+                             "sys_id,number,state,approval,hold_reason,assignment_group,sys_updated_on",
+                             limit=200, order_by="sys_updated_on")
+        now_ = datetime.now(timezone.utc)
         out = []
         for r in rows:                         # sys_updated_on is UTC "YYYY-MM-DD HH:MM:SS" (display_value off)
             self._cache[f"inc:{r['number']}"] = r["sys_id"]
-            if r["sys_updated_on"] <= limit:
-                out.append(r["number"])
+            st = self._status(r)
+            if st in ACTIVE:
+                upd = datetime.strptime(r["sys_updated_on"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                out.append({"number": r["number"], "state": st, "age_s": (now_ - upd).total_seconds()})
         return out
 
     def _tag(self, number, agent):
@@ -406,6 +425,7 @@ class ServiceNowSource(TicketSource):
             "NEW": {"state": "1"},
             "IN_PROGRESS": {"state": "2"},
             "AWAITING_APPROVAL": {"state": "3", "approval": "requested"},
+            "WAITING_FOR_USER": {"state": "3", "hold_reason": "1"},
             "RESOLVED": {"state": "6", "close_code": CLOSE_CODES["fixed"], "close_notes": reason},
             "CLOSED_REJECTED": {"state": "8", "close_notes": reason},
             "ESCALATED": {"state": "2", "assignment_group": self._group(ESCALATION_GROUP), "assigned_to": ""},

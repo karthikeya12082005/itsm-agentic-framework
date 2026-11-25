@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 
 from langgraph.types import interrupt
 
@@ -113,6 +114,26 @@ def grounded(target: str | None, text: str) -> bool:
     return any(re.search(rf"(?<![\w-]){re.escape(f)}(?![\w-])", low) for f in forms)
 
 
+MAX_GRANT_HOURS = 720                     # time-limited grants are capped at 30 days (item 3.3)
+_NUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+        "eight": 8, "nine": 9, "ten": 10, "twelve": 12, "fourteen": 14, "thirty": 30}
+_UNIT = {"h": 1, "hr": 1, "hrs": 1, "hour": 1, "hours": 1, "day": 24, "days": 24, "week": 168, "weeks": 168,
+         "month": 720, "months": 720}
+DURATION_RE = re.compile(r"\b(?:for|during|over)\s+(?:the\s+next\s+|the\s+|next\s+)?(\d+(?:\.\d+)?|" + "|".join(_NUM)
+                         + r")\s*(h|hrs?|hours?|days?|weeks?|months?)\b", re.I)
+TODAY_RE = re.compile(r"\b(?:for\s+today|today\s+only|just\s+today|for\s+the\s+day)\b", re.I)
+TIME_WORDS = re.compile(r"\b(?:hours?|days?|weeks?|months?|today|tomorrow|temporar\w*)\b", re.I)
+
+
+def parse_duration(text: str) -> float | None:
+    """'for 2 days' -> 48, 'for the next 3 hours' -> 3, 'today only' -> 8. None = no time limit stated."""
+    m = DURATION_RE.search(text or "")
+    if m:
+        n = m.group(1).lower()
+        return float(_NUM.get(n) or float(n)) * _UNIT[m.group(2).lower()]
+    return 8.0 if TODAY_RE.search(text or "") else None
+
+
 def _kind_of(target):
     if target in TARGETS:
         return "website_access" if TARGETS[target]["kind"] == "domain" else "software_install"
@@ -137,9 +158,10 @@ def understanding_prompt(text: str) -> str:
 
 
 def extract_request(text: str, use_llm: bool = True) -> dict:
-    """Target, kind, justification and how they were obtained. LLM first, rule-based fallback."""
-    rules = rule_target(text)
-    fb = {"request_kind": _kind_of(rules), "target": rules or "", "justification": ""}
+    """Target, kind, justification, duration and how they were obtained. LLM first, rule-based fallback.
+    Duration: the rule reading wins; an LLM duration is used only if the text mentions a time unit."""
+    rules, dur = rule_target(text), parse_duration(text)
+    fb = {"request_kind": _kind_of(rules), "target": rules or "", "justification": "", "duration_hours": dur}
     if not use_llm:
         return {**fb, "target": rules, "rules_target": rules, "method": "rule-based (LLM not used)",
                 "llm": None}
@@ -148,12 +170,14 @@ def extract_request(text: str, use_llm: bool = True) -> dict:
     ext = res.data
     if not res.ok:
         return {**fb, "target": rules, "rules_target": rules, "method": "rule-based", "llm": res}
+    if dur is None and ext.duration_hours and TIME_WORDS.search(text):
+        dur = float(ext.duration_hours)
     cand = normalise_target(ext.target) if ext.request_kind != "other" else None
     if cand and not grounded(cand, text):
-        return {**fb, "target": rules, "rules_target": rules, "llm": res,
+        return {**fb, "target": rules, "rules_target": rules, "llm": res, "duration_hours": dur,
                 "method": f"rule-based (LLM target {ext.target!r} not found in the request text)"}
     return {"request_kind": ext.request_kind, "target": cand, "justification": ext.justification,
-            "rules_target": rules, "method": "llm", "llm": res}
+            "rules_target": rules, "method": "llm", "llm": res, "duration_hours": dur}
 
 
 def understanding(state, retriever=None, use_llm=True):
@@ -163,8 +187,10 @@ def understanding(state, retriever=None, use_llm=True):
     target = ex["target"]
     role = t.get("requester_role") or EMPLOYEES.get(t["requester"], {}).get("role", "EMPLOYEE")
     known = target in TARGETS
+    dur = ex.get("duration_hours")
     u = {"target": target, "known_target": known, "justification": ex["justification"], "extraction": ex["method"],
          "request_kind": ex["request_kind"], "rules_target": ex["rules_target"], "requester_role": role,
+         "duration_hours": min(dur, MAX_GRANT_HOURS) if dur else None,
          "impact": "Low", "urgency": "Medium", "priority": "Low"}
     if known:
         info, pol = TARGETS[target], POLICIES[TARGETS[target]["policy_id"]]
@@ -180,6 +206,8 @@ def understanding(state, retriever=None, use_llm=True):
     note = (f"target={target} ({'managed' if known else 'NOT in catalogue'}); kind={ex['request_kind']}; "
             f"extraction={ex['method']}"
             + (f"; rule reading={ex['rules_target']}" if ex["rules_target"] != target else "")
+            + (f"; time-limited: {u['duration_hours']:g} h" + (f" (capped from {dur:g} h)" if dur > MAX_GRANT_HOURS
+                                                                else "") if dur else "")
             + (f"; {u['ticket_type']}/{u['category']}/{u['subcategory']}; policy {u['policy_id']}" if known else "")
             + (f"; k-NN confidence {u['confidence']}" if "confidence" in u else ""))
     return {"understanding": u, "trace": [step("Understanding Agent", note, input=f'"{text[:150]}"', llm=ex["llm"],
@@ -287,19 +315,88 @@ def await_approval(state):
 
 
 # ================================================================ Execution Agent (no LLM)
+def _blocked(u, prev, blocking, note_prefix):
+    """The app to be installed/updated is running: no attempt is used, the employee is asked to close it."""
+    return {"attempts": prev, "execution": {"attempt": prev, "status": "BLOCKED", "blocking": blocking},
+            "trace": [step("Execution Agent", f"{note_prefix}: {', '.join(blocking)} running -> installer would "
+                                              "cancel; not attempted", input=f"precheck {u['target']}")]}
+
+
 def execution(state):
+    """Domain grants are synchronous; installs are background jobs on the service (3.7) after a running-process
+    pre-check (3.1). Time-limited grants get expires_at = now + requested duration (3.3)."""
     u, p = state["understanding"], state["policy"]
-    attempts = state.get("attempts", 0) + 1
+    prev = state.get("attempts", 0)
+    number = state["ticket"]["number"]
+    inp = f"{u['kind']} {u['target']} auth {p['authorization_id']}"
+    if u["kind"] == "software":
+        try:
+            blocking = endpoint_client.precheck(u["target"])
+        except endpoint_client.EndpointError:
+            blocking = []                       # the service re-checks before installing anyway
+        if blocking:
+            return _blocked(u, prev, blocking, "pre-check")
+    attempts = prev + 1
+    expires = None
+    if u["kind"] == "domain" and u.get("duration_hours"):
+        expires = (datetime.now(timezone.utc) + timedelta(hours=u["duration_hours"])).isoformat(timespec="seconds")
     try:
-        rec = endpoint_client.execute(u["kind"], u["target"], state["ticket"]["number"], p["authorization_id"])
-        ok = rec.get("status") == "SUCCEEDED"
-        out = {"attempt": attempts, "status": "SUCCEEDED" if ok else "FAILED", "action_id": rec["action_id"]}
-        note = f"attempt {attempts}: {rec['action']} {u['target']} -> {rec['status']} (audit {rec['action_id']})"
+        rec = endpoint_client.execute(u["kind"], u["target"], number, p["authorization_id"], expires_at=expires)
     except endpoint_client.EndpointError as e:
-        out = {"attempt": attempts, "status": "FAILED", "error": str(e)[:300]}
-        note = f"attempt {attempts} failed: {e}"
-    return {"attempts": attempts, "execution": out,
-            "trace": [step("Execution Agent", note, input=f"{u['kind']} {u['target']} auth {p['authorization_id']}")]}
+        return {"attempts": attempts, "execution": {"attempt": attempts, "status": "FAILED", "error": str(e)[:300]},
+                "trace": [step("Execution Agent", f"attempt {attempts} failed: {e}", input=inp)]}
+    st = rec.get("status")
+    if st == "BLOCKED":
+        return _blocked(u, prev, rec.get("blocking_processes") or [], "service refused the install")
+    out = {"attempt": attempts, "status": st if st in ("SUCCEEDED", "RUNNING") else "FAILED",
+           "action_id": rec.get("action_id"), "expires_at": rec.get("expires_at") or expires}
+    upd = {"attempts": attempts, "execution": out}
+    if st == "RUNNING":                         # graph pauses in await_job; the worker resumes it when done
+        upd.update(final_state="IN_PROGRESS",
+                   user_message=f"The installation of {u.get('label') or u['target']} has started on your laptop. "
+                                "We will confirm when it is finished; you do not need to do anything.")
+        note = f"attempt {attempts}: install job {rec.get('action_id')} started (runs in the background)"
+    else:
+        note = (f"attempt {attempts}: {rec.get('action')} {u['target']} -> {st} (audit {rec.get('action_id')})"
+                + (f"; expires {expires}" if expires else ""))
+    upd["trace"] = [step("Execution Agent", note, input=inp)]
+    return upd
+
+
+def await_job(state):
+    """Pause until the install job ends (worker resumes with the job record from GET /jobs/{id})."""
+    ex = state["execution"]
+    rec = interrupt({"type": "job", "ticket": state["ticket"]["number"], "action_id": ex["action_id"]})
+    st = rec.get("status") if rec.get("status") in ("SUCCEEDED", "FAILED") else "FAILED"
+    detail = rec.get("error") or (rec.get("message") or "")[-160:]
+    return {"execution": {**ex, "status": st}, "final_state": None,
+            "trace": [step("Execution Agent", f"attempt {ex['attempt']}: install job {ex['action_id']} finished -> "
+                                              f"{st}" + (f" ({' '.join(detail.split())[:160]})" if st == "FAILED" and
+                                                         detail else ""), input="job result", model="deterministic")]}
+
+
+def request_user_action(state):
+    apps = ", ".join(state["execution"]["blocking"])
+    msg, comm = communication.compose(state, "WAITING_FOR_USER", f"{apps} must be closed first")
+    req = step("Execution Agent", f"asked the employee to close {apps}; the install starts automatically when it "
+                                  f"is closed (checked every poll, gives up after {USER_WAIT_HOURS} h)")
+    req["latency_s"] = 0.0
+    return {"final_state": "WAITING_FOR_USER", "user_message": msg, "trace": [req, comm]}
+
+
+USER_WAIT_HOURS = 24
+
+
+def await_user(state):
+    """Pause until the blocking app is closed (worker resumes with READY) or USER_WAIT_HOURS pass (TIMEOUT)."""
+    ex = state["execution"]
+    r = interrupt({"type": "user_action", "ticket": state["ticket"]["number"], "close": ex["blocking"],
+                   "package": state["understanding"]["target"]})
+    status = "READY" if r.get("status") == "READY" else "ABANDONED"
+    note = ("employee closed " + ", ".join(ex["blocking"]) + " -> installing" if status == "READY"
+            else f"{', '.join(ex['blocking'])} still running after {USER_WAIT_HOURS} h -> not installed")
+    return {"execution": {**ex, "status": status}, "final_state": None,
+            "trace": [step("Execution Agent", note, input="process re-check", model="deterministic")]}
 
 
 # ================================================================ Verification Agent (predicate check, eq. 3.8)

@@ -21,6 +21,7 @@ def install(package_id: str) -> dict:
 
 
 def uninstall(package_id: str) -> dict:
-    r = subprocess.run(["winget", "uninstall", "--id", package_id, *COMMON[:2], "--disable-interactivity"],
-                       capture_output=True, text=True, timeout=1200)
+    # --scope machine: remove the machine-wide copy the service installed, never a user's own copy (3.6)
+    r = subprocess.run(["winget", "uninstall", "--id", package_id, "--scope", "machine", *COMMON[:2],
+                        "--disable-interactivity"], capture_output=True, text=True, timeout=1200)
     return {"changed": r.returncode == 0, "returncode": r.returncode, "message": r.stdout[-800:] + r.stderr[-400:]}

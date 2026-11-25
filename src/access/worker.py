@@ -8,7 +8,10 @@
                    resumed from its checkpoint (Command(resume=...)).
   sweep_stuck      tickets left IN_PROGRESS (crash between acknowledge and save) are finished from their
                    checkpoint: re-saved, resumed, or re-run (item 2.8)
-  run_poller       sweep + fetch NEW tickets every `interval` seconds and process them (Ctrl+C stops)
+  tend_active      resume paused tickets: install job finished (3.7), blocking app closed / 24 h passed (3.1),
+                   then the stuck sweep
+  expire_grants    revoke due time-limited grants through the enforcement service (3.3)
+  run_poller       tend + expire + fetch NEW tickets every `interval` seconds and process them (Ctrl+C stops)
 
 Safety: a crash anywhere in the agent pipeline escalates the ticket to a human (never RESOLVED without the
 verification agent's predicate check). The policy decision is always the rule engine's (agents.decide).
@@ -20,7 +23,7 @@ import time
 
 from langgraph.types import Command
 
-from src.access import agents
+from src.access import agents, endpoint_client
 from src.access.store import now
 from src.orchestrator import checkpoint as cp
 from src.orchestrator.trace import step
@@ -114,41 +117,133 @@ def approve_ticket(source, graph, number: str, approver: str, approved: bool = T
     return True, f"{why}; {status.lower()} -> {result['final_state']}"
 
 
+def _resume(source, graph, number, value, why, out) -> str:
+    """Resume a paused graph (job finished / app closed / time-out) and write only the new steps."""
+    cfg = _cfg(source, number)
+    t = source.get(number)
+    v = graph.get_state(cfg).values
+    n0 = len(v.get("trace", []))
+    try:
+        result = graph.invoke(Command(resume=value), cfg)
+    except Exception as e:  # noqa: BLE001
+        return _escalate(source, number, f"resumed agent pipeline ({why})", e)
+    source.save_result(number, t, result, result["trace"][n0:])
+    out(f"{number}: {why} -> {result.get('final_state')}")
+    return result.get("final_state")
+
+
+def _recover(source, graph, number, out) -> str:
+    """Finish one ticket stuck IN_PROGRESS from its checkpoint. Returns what was done."""
+    cfg = _cfg(source, number)
+    t = source.get(number)
+    snap = graph.get_state(cfg)
+    v = snap.values
+    if not v:                                         # crashed before the graph started
+        action, result = "no checkpoint -> agents re-run", _fresh_run(source, graph, number, t)
+        steps = result["trace"]
+    elif "await_approval" in (snap.next or ()):       # paused for approval
+        if t.get("approval_status") in ("APPROVED", "REJECTED"):
+            role = v["policy"].get("approver_role")
+            d = {"status": t["approval_status"], "by": "approver recorded on the ticket", "role": role}
+            n0 = len(v.get("trace", []))
+            action, result = f"approval {d['status']} recorded -> graph resumed", graph.invoke(Command(resume=d), cfg)
+            steps = result["trace"][n0:]
+        else:
+            action, result, steps = "result of the run was not saved -> re-saved (waiting)", v, v["trace"]
+    elif snap.next:                                   # crashed in the middle of a run
+        action, result = f"run interrupted before {snap.next} -> resumed from checkpoint", graph.invoke(None, cfg)
+        steps = result["trace"]
+    else:                                             # finished but not written back
+        action, result, steps = "finished run was not saved -> re-saved", v, v["trace"]
+    source.add_note(number, "Orchestrator", f"recovery sweep: {action}")
+    source.save_result(number, t, result, steps)
+    out(f"{number}: recovered ({action}) -> {result.get('final_state')}")
+    return action
+
+
 def sweep_stuck(source, graph, older_than_s: float = STUCK_AFTER_S, out=print) -> list[tuple[str, str]]:
-    """Finish tickets stuck IN_PROGRESS for longer than older_than_s (known issue from Phase 1)."""
+    """Finish tickets stuck IN_PROGRESS for longer than older_than_s (known issue from Phase 1). Tickets paused
+    on purpose (install job running, waiting for the employee) are not stuck and are left to tend_active."""
     done = []
     for number in source.fetch_stuck(older_than_s):
-        cfg = _cfg(source, number)
         try:
-            t = source.get(number)
-            snap = graph.get_state(cfg)
-            v = snap.values
-            if not v:                                         # crashed before the graph started
-                action, result = "no checkpoint -> agents re-run", _fresh_run(source, graph, number, t)
-                steps = result["trace"]
-            elif "await_approval" in (snap.next or ()):       # paused for approval
-                if t.get("approval_status") in ("APPROVED", "REJECTED"):
-                    role = v["policy"].get("approver_role")
-                    d = {"status": t["approval_status"], "by": "approver recorded on the ticket", "role": role}
-                    n0 = len(v.get("trace", []))
-                    action, result = f"approval {d['status']} recorded -> graph resumed", \
-                        graph.invoke(Command(resume=d), cfg)
-                    steps = result["trace"][n0:]
-                else:
-                    action, result, steps = "result of the run was not saved -> re-saved (waiting)", v, v["trace"]
-            elif snap.next:                                   # crashed in the middle of a run
-                action, result = f"run interrupted before {snap.next} -> resumed from checkpoint", \
-                    graph.invoke(None, cfg)
-                steps = result["trace"]
-            else:                                             # finished but not written back
-                action, result, steps = "finished run was not saved -> re-saved", v, v["trace"]
-            source.add_note(number, "Orchestrator", f"recovery sweep: {action}")
-            source.save_result(number, t, result, steps)
-            done.append((number, action))
-            out(f"{number}: recovered ({action}) -> {result.get('final_state')}")
+            nxt = graph.get_state(_cfg(source, number)).next or ()
+            if "await_job" in nxt or "await_user" in nxt:
+                continue
+            done.append((number, _recover(source, graph, number, out)))
         except Exception as e:  # noqa: BLE001 - one bad ticket must not stop the sweep
             log.exception("sweep %s", number)
             out(f"{number}: sweep failed ({type(e).__name__}: {e})")
+    return done
+
+
+def tend_active(source, graph, stuck_after_s: float = STUCK_AFTER_S, out=print,
+                user_wait_s: float = agents.USER_WAIT_HOURS * 3600) -> list[tuple[str, str]]:
+    """Every poll: resume tickets whose install job ended (3.7) or whose blocking app was closed (3.1;
+    give up after user_wait_s), then recover stuck runs (2.8). Read-only endpoint checks; changes only
+    through the graph."""
+    done = []
+    for t in source.fetch_active():
+        number = t["number"]
+        try:
+            snap = graph.get_state(_cfg(source, number))
+            nxt, v = snap.next or (), snap.values
+            if "await_job" in nxt:
+                aid = v["execution"]["action_id"]
+                try:
+                    rec = endpoint_client.job(aid)
+                except endpoint_client.EndpointError as e:
+                    if "404" not in str(e):
+                        continue                  # service down: try again next poll
+                    rec = {"status": "FAILED", "error": "install job unknown (service restarted)"}
+                if rec.get("status") == "RUNNING":
+                    continue
+                done.append((number, _resume(source, graph, number, rec, f"install job {rec.get('status')}", out)))
+            elif "await_user" in nxt:
+                try:
+                    blocking = endpoint_client.precheck(v["understanding"]["target"])
+                except endpoint_client.EndpointError:
+                    continue
+                if not blocking:
+                    done.append((number, _resume(source, graph, number, {"status": "READY"}, "application closed",
+                                                 out)))
+                elif t["age_s"] >= user_wait_s:
+                    done.append((number, _resume(source, graph, number, {"status": "TIMEOUT"},
+                                                 f"{', '.join(blocking)} still open after {user_wait_s / 3600:g} h",
+                                                 out)))
+            elif t["state"] == "IN_PROGRESS" and t["age_s"] >= stuck_after_s:
+                done.append((number, _recover(source, graph, number, out)))
+        except Exception as e:  # noqa: BLE001 - one bad ticket must not stop the loop
+            log.exception("tend %s", number)
+            out(f"{number}: tend failed ({type(e).__name__}: {e})")
+    return done
+
+
+def expire_grants(source, out=print) -> list[str]:
+    """Item 3.3: revoke time-limited grants whose expires_at has passed (through the enforcement service's
+    audited rollback) and tell the requester on the ticket."""
+    try:
+        due = [g for g in endpoint_client.grants() if g["due"]]
+    except endpoint_client.EndpointError:
+        return []
+    done = []
+    for g in due:
+        target = (g.get("params") or {}).get("domain") or (g.get("params") or {}).get("package_id")
+        try:
+            rec = endpoint_client.rollback(g["action_id"], g["ticket_id"])
+        except endpoint_client.EndpointError as e:
+            out(f"{g['ticket_id']}: revoking {target} failed: {e}")
+            continue
+        done.append(g["ticket_id"])
+        out(f"{g['ticket_id']}: time-limited access to {target} expired -> revoked ({rec.get('status')})")
+        try:
+            source.add_note(g["ticket_id"], "Execution Agent", f"time-limited access to {target} expired at "
+                                                              f"{g['expires_at']} -> revoked (rollback "
+                                                              f"{rec.get('action_id')} of {g['action_id']})")
+            source.add_comment(g["ticket_id"], f"Your time-limited access to {target} has ended as requested. "
+                                               "Raise a new request if you need it again.")
+        except Exception:  # noqa: BLE001 - ticket of another ticket source / deleted: the revoke still counts
+            log.warning("could not note expiry on %s", g["ticket_id"])
     return done
 
 
@@ -159,7 +254,8 @@ def run_poller(source, graph, interval: float = 30, once: bool = False, out=prin
     while True:
         try:
             numbers = source.fetch_new()
-            sweep_stuck(source, graph, stuck_after_s, out)
+            tend_active(source, graph, stuck_after_s, out)
+            expire_grants(source, out)
         except Exception as e:  # noqa: BLE001 - e.g. PDI hibernating; keep polling
             out(f"poll failed: {type(e).__name__}: {e}")
             if once:

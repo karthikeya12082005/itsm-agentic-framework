@@ -10,8 +10,11 @@ incident by ai.agent (approval field + work notes; sysapproval_approver rows are
 for non-admins - see servicenow_client).
 
 Setup creates (users/groups: or updates to the values below; safe to re-run):
-  * users     manager01 (line manager), employee01 (title DEVELOPER, manager manager01), security01
-  * groups    "IT Security"  = policy approver_role SECURITY_TEAM, member security01
+  * users     manager01 (line manager), employee01 (title DEVELOPER, manager manager01), security01,
+              serviceowner01, cab01, aigov01, appowner01, dataowner01 (approver records, item 3.2)
+  * groups    one per policy approver_role (catalog.APPROVER_GROUPS): "IT Security" = SECURITY_TEAM,
+              "IT Service Owners", "Change Advisory Board", "AI Governance Board", "Application Owners",
+              "Data Owners" - one member each (catalog.APPROVER_USERS)
               "AI Service Desk" = tickets handled by the agents, member ai.agent
   * choice    incident.category 'access' - already on the PDI as "Access & Password"; only created if missing
 The admin session is a web login (Basic auth is restricted to snc_basic_auth_api_access holders, and admin must
@@ -22,7 +25,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.access.catalog import APPROVER_GROUPS
+from src.access.catalog import APPROVER_GROUPS, APPROVER_USERS
 from src.common import config  # noqa: F401  (loads .env)
 from src.integrations.servicenow_client import ServiceNowClient, ServiceNowError, _env
 
@@ -35,6 +38,9 @@ USERS = [
      "email": "security01@example.com"},
     {"user_name": "employee01", "first_name": "Employee", "last_name": "01", "title": "DEVELOPER",
      "email": "employee01@example.com", "manager": "@manager01"},  # '@name' = sys_id of that user
+] + [  # one approver record per approver group (item 3.2), no logins
+    {"user_name": u, "first_name": g, "last_name": "Approver", "title": title, "email": f"{u}@example.com"}
+    for g, (u, title) in APPROVER_USERS.items() if u != "security01"
 ]
 USER_DEFAULTS = {"active": "true", "locked_out": "false", "internal_integration_user": "false",
                  "web_service_access_only": "false"}
@@ -44,9 +50,11 @@ USER_DEFAULTS = {"active": "true", "locked_out": "false", "internal_integration_
 AGENT_GROUP = "AI Service Desk"
 ESCALATION_GROUP = "Service Desk"   # built-in human group on the PDI; escalated tickets are reassigned to it
 GROUPS = [
-    {"name": "IT Security", "description": "Approvers for policy approver_role SECURITY_TEAM "
-                                           "(approvals given via the agent CLI, recorded by ai.agent)",
-     "members": ["security01"]},
+    {"name": group, "description": f"Approvers for policy approver_role {role} "
+                                   "(approvals given via the agent CLI, recorded by ai.agent)",
+     "members": [APPROVER_USERS[group][0]]}
+    for role, group in APPROVER_GROUPS.items()
+] + [
     {"name": AGENT_GROUP, "description": "Incidents handled by the multi-agent ITSM framework (ai.agent)",
      "members": ["@integration"]},  # '@integration' = SERVICENOW_USER (ai.agent)
 ]
@@ -159,8 +167,9 @@ def run_test() -> int:
     check("LINE_MANAGER = caller's manager = manager01", emp["manager.user_name"] == "manager01")
 
     sec = sn.group_members(APPROVER_GROUPS["SECURITY_TEAM"])
-    check("SECURITY_TEAM = 'IT Security' members", any(m["user_name"] == "security01" for m in sec),
-          [m["user_name"] for m in sec])
+    for role, group in APPROVER_GROUPS.items():            # item 3.2: every approver role has its group
+        members = [m["user_name"] for m in sn.group_members(group)]
+        check(f"{role} = {group!r} has {APPROVER_USERS[group][0]}", APPROVER_USERS[group][0] in members, members)
     desk = sn.first("sys_user_group", f"name={AGENT_GROUP}", "sys_id,name")
     desk_members = sn.group_members(AGENT_GROUP)
     check(f"group {AGENT_GROUP!r} with {sn.user}", desk and any(m["user_name"] == sn.user for m in desk_members),
