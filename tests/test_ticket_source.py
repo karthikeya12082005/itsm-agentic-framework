@@ -80,7 +80,7 @@ class LocalContract(unittest.TestCase):
 
 
 IDS = {"group:AI Service Desk": "DESK", "group:Service Desk": "HUMANS", "user:employee01": "EMP",
-       "user:ai.agent": "AGENT", "inc:INC0010100": "SYS100"}
+       "user:ai.agent": "AGENT", "user:security01": "U9", "inc:INC0010100": "SYS100"}
 
 
 def sn_source(tmp):
@@ -101,6 +101,7 @@ def sn_source(tmp):
     sn.get_journal.side_effect = lambda *a: list(journal)
     src = ServiceNowSource(client=sn)
     src._cache.update(IDS)
+    src.notifications = False                     # a fake instance never queues e-mails (6.5)
     return src, sn
 
 
@@ -274,7 +275,8 @@ class ServiceNowMapping(unittest.TestCase):
         self.assertIn("3. [Policy & Risk Agent] waiting for approval by SECURITY_TEAM: security01", trace)
         self.assertEqual(self.sn.add_work_note.call_count, 1)                 # one trace note per run
         self.sn.add_comment.assert_called_with("incident", "SYS100", "needs approval")
-        self.assertEqual(self.sent(), {"state": "3", "approval": "requested"})
+        # 6.5: the approvers join the watch list in the same update -> "approval needed" e-mail reaches them
+        self.assertEqual(self.sent(), {"state": "3", "approval": "requested", "watch_list": "U9"})
         self.assertIn("1. [Understanding Agent] github.com | groq:x 0.50s", trace)
 
 

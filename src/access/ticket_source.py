@@ -26,6 +26,7 @@ Live self-test against the PDI (creates 3 "[selftest]" incidents and closes them
 """
 from __future__ import annotations
 
+import logging
 import re
 import sys
 from abc import ABC, abstractmethod
@@ -36,6 +37,8 @@ from src.access.catalog import APPROVER_GROUPS, EMPLOYEES, LOCAL_GROUP_MEMBERS
 from src.access.store import TicketStore, now
 from src.orchestrator import checkpoint as cp
 from src.orchestrator.trace import as_note, format_step
+
+log = logging.getLogger("ticket_source")
 
 STATUSES = ("NEW", "IN_PROGRESS", "AWAITING_APPROVAL", "RESOLVED", "CLOSED_REJECTED", "ESCALATED",
             "WAITING_FOR_USER")
@@ -86,9 +89,22 @@ class TicketSource(ABC):
     def add_comment(self, number: str, text: str) -> None:
         """Customer-visible message to the requester."""
 
+    def messages(self, number: str) -> list[dict]:
+        """Customer-visible conversation [{time, author, text}], oldest first (6.4 portal). Default: the agents'
+        latest message only."""
+        t = self.get(number)
+        m = t.get("user_message")
+        return [{"time": t.get("resolved_at") or t["created_at"], "author": "AI Service Desk", "text": m}] if m else []
+
+    def user_email(self, user: str) -> str | None:
+        """E-mail address of a user for the SMTP fallback (6.5); None if unknown."""
+        from src.common.notify import plus_address
+        return plus_address(user)
+
     @abstractmethod
-    def set_status(self, number: str, status: str, reason: str = "") -> None:
-        """Move the ticket to a neutral status (see module doc)."""
+    def set_status(self, number: str, status: str, reason: str = "", watchers: set[str] | None = None) -> None:
+        """Move the ticket to a neutral status (see module doc). watchers: user names to add to the ticket's watch
+        list in the same update (6.5: the approvers, so the 'approval needed' notification reaches them)."""
 
     @abstractmethod
     def record_approval(self, number: str, approved: bool, approver: str, role: str) -> None:
@@ -144,14 +160,38 @@ class TicketSource(ABC):
             return True, f"{user} is {role}"
         return False, f"{user} is not {role} (allowed: {', '.join(sorted(allowed)) or 'nobody'})"
 
+    STATUS_WORDS = {"RESOLVED": "resolved", "CLOSED_REJECTED": "closed", "AWAITING_APPROVAL": "waiting for approval",
+                    "WAITING_FOR_USER": "waiting for you", "IN_PROGRESS": "in progress", "ESCALATED": "passed to the "
+                    "Service Desk", "FAILED": "failed"}
+
+    def _queue_mail(self, number, ticket, final, message, approvers=None) -> None:
+        """6.5: remember the message for the SMTP fallback (sent only if the ticket system does not send it)."""
+        if not getattr(self, "notifications", True):           # temporary desks (tests, evaluations) never mail
+            return
+        try:
+            from src.common import notify
+            notify.queue(number, [ticket.get("requester")], f"{number}: your IT request is "
+                         f"{self.STATUS_WORDS.get(final, final.lower())}", f"{message}\n\n- AI Service Desk ({number})", source=self.name)
+            if final == "AWAITING_APPROVAL" and approvers:
+                notify.queue(number, sorted(approvers), f"Approval needed: {number}",
+                             f"An AI Service Desk request needs your approval.\n\n{number}: "
+                             f"{(ticket.get('description') or '')[:400]}\nRequested for: {ticket.get('requester')}\n\n"
+                             f"Give your decision with the agent CLI (your identity is checked):\n"
+                             f"  python -m src.access.cli approve {number} --by <your user name>   (add --reject "
+                             "to reject)", source=self.name)
+        except Exception as e:                                 # noqa: BLE001 - notification must never break a ticket
+            log.warning("notification queue failed for %s: %s", number, e)
+
     def save_result(self, number: str, ticket: dict, result: dict, steps: list | None = None) -> None:
         """Write one graph run back: its agent steps (trace), the structured context, the message, the status.
         `steps` = the trace entries of THIS run (default: the whole trace in result)."""
         steps = list(result.get("trace", []) if steps is None else steps)
         final = result["final_state"]
         u, p = result.get("understanding") or {}, result.get("policy") or {}
+        watchers = None
         if final == "AWAITING_APPROVAL":
             role = p.get("approver_role")
+            watchers = self.approvers(role, ticket) - {ticket.get("requester")}
             who = ", ".join(sorted(self.approvers(role, ticket))) or "nobody is configured for this role"
             steps.append({"agent": "Policy & Risk Agent", "model": "deterministic", "output":
                           f"waiting for approval by {role}: {who}. "
@@ -163,8 +203,11 @@ class TicketSource(ABC):
             "approval_status": result.get("approval_status"), "user_message": result.get("user_message"),
             "context": {k: result.get(k) for k in CONTEXT_KEYS}})
         if result.get("user_message"):
-            self.add_comment(number, result["user_message"])
-        self.set_status(number, final, reason=result.get("user_message") or final)
+            self.add_comment(number, result["user_message"])       # -> ServiceNow emails the caller
+            self._queue_mail(number, ticket, final, result["user_message"], watchers)
+        # approvers join the watch list in the SAME update that sets approval=requested -> they get the
+        # "approval needed" notification, not the caller's comment email
+        self.set_status(number, final, reason=result.get("user_message") or final, watchers=watchers)
 
 
 # ============================================================================================== local (SQLite)
@@ -175,6 +218,7 @@ class LocalSource(TicketSource):
     def __init__(self, path: Path | None = None):
         from src.access.store import DB_PATH
         self.path = Path(path) if path else DB_PATH
+        self.notifications = path is None or self.path == DB_PATH     # only the real local desk e-mails people
         self.store = TicketStore(self.path)
 
     def thread_id(self, number):
@@ -219,7 +263,7 @@ class LocalSource(TicketSource):
     def add_comment(self, number, text):
         self.store.update(number, user_message=text)
 
-    def set_status(self, number, status, reason=""):
+    def set_status(self, number, status, reason="", watchers=None):
         if status not in STATUSES:
             raise ValueError(f"unknown status {status}")
         fields = {"state": status}
@@ -442,7 +486,24 @@ class ServiceNowSource(TicketSource):
     def add_comment(self, number, text):
         self.sn.add_comment("incident", self._sys_id(number), text)
 
-    def set_status(self, number, status, reason=""):
+    def messages(self, number):
+        entries = self.sn.get_journal("incident", self._sys_id(number), "comments")
+        return sorted(({"time": e["created_on"], "author": e["author"], "text": e["value"]} for e in entries),
+                      key=lambda m: m["time"])
+
+    def user_email(self, user):
+        rows = self.sn.query("sys_user", f"user_name={user}", "email", limit=1)
+        return (rows[0].get("email") or None) if rows else None
+
+    def mail_status(self, number, since_iso):
+        """ServiceNow e-mails of this incident created since `since_iso` (UTC): did the platform send one? (6.5
+        fallback check; ai.agent can read sys_email.)"""
+        since = datetime.fromisoformat(since_iso).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        rows = self.sn.query("sys_email", f"instance={self._sys_id(number)}", "type,sys_created_on", limit=50)
+        rows = [r for r in rows if (r.get("sys_created_on") or "") >= since]
+        return {"sent": any(r["type"] == "sent" for r in rows), "types": sorted({r["type"] for r in rows})}
+
+    def set_status(self, number, status, reason="", watchers=None):
         from src.integrations.servicenow_client import CLOSE_CODES
         reason = (reason or status)[:3900]
         data = {
@@ -456,6 +517,9 @@ class ServiceNowSource(TicketSource):
         }.get(status)
         if data is None:
             raise ValueError(f"unknown status {status}")
+        if watchers:
+            ids = [self._user(u) for u in sorted(watchers)]
+            data = {**data, "watch_list": ",".join(i for i in ids if i)}
         self.sn.update("incident", self._sys_id(number), data, fields="sys_id,state")
 
     def record_approval(self, number, approved, approver, role):
