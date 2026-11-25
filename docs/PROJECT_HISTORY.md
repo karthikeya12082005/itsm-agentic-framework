@@ -238,3 +238,38 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
   with expires_at); the running schema was checked via /openapi.json because /health shows the same version.
 - 142 offline tests. Test incidents INC0010041-48 on the PDI (setup test, Phase-3 live run), all closed.
 - **Phase 3 complete.** Next: Phase 4 (simulated services, fault injector, RCA agent, remediation).
+
+## 13. Phase 4 — Objective 3: incident resolution on simulated services (Nov 25 2026, branch phase-4-incidents)
+- Lab (src/lab): four FastAPI services as plain local processes (web -> orders-api -> cache, worker), health /
+  metrics / logs, admin endpoints behind a random token; supervisor start/stop/restart/reset without admin or
+  Docker. Eight faults with ground truth (dataset root_cause_category + SOP), remediation action catalogue with
+  audit + rollback specs (mirrors the endpoint service). Live: every fault injected and fixed by its action.
+- Mistake caught before push: data/lab/ (incl. the lab token) was committed because data/ was not fully
+  ignored. Amended (never pushed), data/lab/ ignored, token rotated, and the pre-commit scan now refuses
+  token files, data/lab, data/checkpoints and logs.
+- A unit test exposed that actions.AUDIT was bound at import time (tests wrote to the real audit log) -> path
+  resolved at call time; the stray test records were removed.
+- ServiceNow categories checked first: internal_applications, performance, hardware, database (no "monitoring"
+  contact type -> left empty). Monitoring incidents: caller ai.agent, group AI Service Desk.
+- Root causes chosen per fault from the SOPs' dataset labels (labels per SOP are noisy because synthetic):
+  service_down SOFTWARE_DEFECT, memory_leak / high_latency RESOURCE_EXHAUSTION, disk_full CAPACITY_LIMIT,
+  bad_config DEPLOYMENT_CHANGE, cert_expired CERTIFICATE_EXPIRY, db_pool_exhausted CONFIGURATION_ERROR,
+  dependency_down DEPENDENCY_FAILURE. Approvals: POL-0043 CAB, POL-0044 / 0042 IT_SERVICE_OWNER, POL-0052
+  APPLICATION_OWNER; POL-0041/46/48/49 ALLOW (on-call role SITE_RELIABILITY_ENGINEER, no new SN user).
+- RCA design: ReAct (LLM picks read-only tools) + deterministic evidence completion + Bayesian ranking (prior
+  from train split + k-NN, expert likelihood table for lab signals, LLM hypothesis as noisy observation).
+  Rules-only live check: root 8/8, top-1 7/8, top-3 8/8. LLM framing differed (memory leak / crashed dependency
+  called SOFTWARE_DEFECT) -> category definitions in the prompt (taxonomy, not test hints); alpha calibrated on
+  train data in 4.6 instead of being tuned on the 8 faults.
+- Live problems found and fixed: (1) two simultaneous unrelated faults were merged into one incident; the fix for
+  one could never verify (the agent correctly escalated instead of faking RESOLVED) -> independent events by
+  dependency relation, RCA scoped to the event; (2) after an OOM crash the single "FATAL: OutOfMemoryError" line
+  set both crash and OOM features (naive-Bayes double count) -> separated; out-of-memory evidence selects
+  SOP-0046 even when no memory metric is left; (3) the LLM critic escalated a correct restart as "only a
+  mitigation" -> ITIL guidance: incident management restores service, the code fix is problem management.
+- Live end to end on ServiceNow: INC0010049 broken release -> ReAct 4 tools -> DEPLOYMENT_CHANGE -> CAB approval
+  (aigov01 refused, cab01 approved) -> ROLLBACK_DEPLOYMENT -> verified -> Resolved. INC0010052 memory leak and
+  INC0010053 full disk (simultaneous) -> two incidents -> both Resolved automatically (34 s / 12.9 s).
+  Test incidents INC0010050/51 (before the fixes) were escalated, then cancelled as superseded.
+- Dataset RCA: naive Bayes with likelihoods LEARNED from the train split on creation-time text features (never
+  root-cause / hypothesis fields): test top-1 0.268, top-3 0.588 vs prior-only 0.196.

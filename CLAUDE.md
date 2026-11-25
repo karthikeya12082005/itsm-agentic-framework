@@ -223,6 +223,11 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   warm-up handle it; the critic then runs on groq gpt-oss-120b.
 - Gemini free tier: 429 quota on gemini-3.5-flash and -flash-lite during long batch runs (Nov 25 2026) ->
   critic and retrieval rewrite move to Groq (router secondary); evaluations pace tickets (--pace 5).
+- Groq free tier (headers checked Nov 25 2026): per model 1000 requests/DAY and only 8000 tokens/MINUTE; a ReAct
+  RCA prompt is ~1.5-2k tokens -> ~4 calls/min. Router (Nov 25): a 429 with Retry-After <= 20 s waits and retries
+  the same model once; otherwise the model cools exactly Retry-After (no escalation). Batch evaluations must pace
+  (eval_incident --pace 8 dataset / 20 lab). A first unpaced incident eval run was stopped because half of its LLM
+  calls were skipped (cooldowns) - its numbers were not used.
 - Groq free tier rate-limits gpt-oss-120b (HTTP 429 after ~4 critic calls within a minute, ~1.2k tokens each).
   Batch evaluation (3.5 / 5.1) must pace calls or accept fallbacks; the router logs every fallback.
 - Phase-1 tickets (INC0010001-24) have no checkpoint: `list`/`show` show decision/target as None for them.

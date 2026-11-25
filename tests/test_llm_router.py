@@ -178,6 +178,28 @@ class RouterTest(EnvCase):
         self.assertEqual(len(fake.calls), 1)               # secondary not tried: budget (8 s * 2.5) is spent
 
 
+class RateLimitTest(EnvCase):
+    def test_short_retry_after_waits_and_retries_same_model(self):
+        fake = FakeProviders({"groq:small": [R.ProviderError("transient", "HTTP 429", retry_after=3),
+                                             '{"target": "ok.com"}']})
+        with fake.patch(), mock.patch.object(R.time, "sleep") as sleep:
+            res = R.complete_json("understanding", "x", Target)
+        self.assertEqual((res.provider, res.fallback, res.data.target), ("groq", "none", "ok.com"))
+        sleep.assert_called_once()
+        self.assertEqual(R.cooling("groq:small"), 0)
+
+    def test_long_retry_after_cools_exactly_without_growth(self):
+        fake = FakeProviders({"groq:small": [R.ProviderError("transient", "HTTP 429", retry_after=50)],
+                              "gemini:gemini-lite": ['{"target": "b.com"}']})
+        with fake.patch():
+            res = R.complete_json("understanding", "x", Target)
+            res2 = R.complete_json("understanding", "x", Target)
+        self.assertEqual(res.provider, "gemini")
+        self.assertLessEqual(R.cooling("groq:small"), 51.5)
+        self.assertGreater(R.cooling("groq:small"), 45)
+        self.assertIn("cooldown", res2.attempts[0]["error"])
+
+
 class WarmupTest(EnvCase):
     def test_warmup_cools_down_failing_models_before_first_ticket(self):
         fake = FakeProviders({"groq:small": ['{"ok": true}'],

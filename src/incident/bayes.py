@@ -91,9 +91,59 @@ def knn_distribution(root_causes: list[str]) -> dict[str, float] | None:
     return {rc: (c[rc] + 1) / total for rc in classes()}
 
 
+# ---------------------------------------------------------------- text evidence (dataset tickets, item 4.6)
+# Keyword features of an incident's text AT CREATION TIME (title, description, symptoms, observed state,
+# telemetry, diagnostic data - never root_cause / hypothesis fields). Their likelihoods are LEARNED from the
+# train split (learned_likelihoods), not set by hand.
+TEXT_FEATURES = {
+    "t_certificate": r"certificat|\btls\b|\bssl\b|handshake|x\.?509",
+    "t_disk": r"\bdisk\b|storage|no space|volume (?:full|usage)|inode",
+    "t_memory": r"\bmemory\b|\boom\b|out of memory|\bheap\b|swap",
+    "t_cpu": r"\bcpu\b|saturat|load average",
+    "t_latency": r"latency|slow|timeout|timed out|response time",
+    "t_deploy": r"deploy|release|rollout|upgrade|new version|change window|patch",
+    "t_config": r"config|misconfigur|setting|parameter|\bvalue\b",
+    "t_pool": r"connection pool|\bpool\b|max(?:imum)? connections|sessions",
+    "t_unavailable": r"\bdown\b|unavailable|unreachable|\b5\d\d\b|crash|outage|not responding",
+    "t_dependency": r"dependen|upstream|downstream|third[- ]party|\bapi\b",
+    "t_credential": r"password|credential|expired account|token|secret|\bkey\b|authenticat",
+    "t_dns": r"\bdns\b|resolv|hostname|nslookup",
+    "t_firewall": r"firewall|\bport\b|blocked|\bacl\b",
+    "t_network": r"packet|network|\bvpn\b|routing|connectivity|bandwidth",
+    "t_permission": r"permission|access denied|entitle|licen[cs]e|group membership|not authori",
+    "t_security": r"malware|phish|suspicious|attack|breach|intrusion|security alert",
+    "t_user": r"user error|mistyp|wrong (?:password|url)|did not follow|training",
+    "t_hardware": r"hardware|\bfan\b|battery|\bdisk failure\b|motherboard|overheat",
+    "t_version": r"version|incompatib|conflict|dependency hell|library",
+    "t_capacity": r"capacity|quota|limit reached|throttl|max(?:imum)? (?:users|size)",
+}
+TEXT_FIELDS = ("title", "description", "symptoms", "observed_state", "telemetry_type", "diagnostic_data")
+
+
+def text_features(record: dict) -> dict[str, bool]:
+    import re
+    text = " ".join(str(record.get(k) or "") for k in TEXT_FIELDS)
+    return {f: bool(re.search(rx, text, re.I)) for f, rx in TEXT_FEATURES.items()}
+
+
+@lru_cache(maxsize=1)
+def learned_likelihoods() -> dict[str, dict[str, float]]:
+    """P(text feature present | rc) from the TRAIN split with Laplace smoothing."""
+    rows = _train_incidents()
+    out = {f: {} for f in TEXT_FEATURES}
+    for rc in classes():
+        sub = [text_features(t) for t in rows if t["root_cause_category"] == rc]
+        for f in TEXT_FEATURES:
+            out[f][rc] = (sum(x[f] for x in sub) + 1) / (len(sub) + 2)
+    return out
+
+
 def rank(features: dict[str, bool], dataset_category: str | None = None, knn_root_causes: list[str] | None = None,
-         llm_hypothesis: str | None = None, alpha: float = LLM_ALPHA) -> list[tuple[str, float]]:
-    """Posterior over root causes, highest first. Log-space for numerical stability."""
+         llm_hypothesis: str | None = None, alpha: float = LLM_ALPHA,
+         likelihood: dict | None = None) -> list[tuple[str, float]]:
+    """Posterior over root causes, highest first. Log-space for numerical stability.
+    likelihood: feature table to use (default: the lab's expert table LIKELIHOOD)."""
+    table = likelihood or LIKELIHOOD
     prior = category_prior(dataset_category)
     knn = knn_distribution(knn_root_causes or [])
     if knn:
@@ -103,9 +153,9 @@ def rank(features: dict[str, bool], dataset_category: str | None = None, knn_roo
     for rc in classes():
         lp = math.log(prior[rc])
         for f, present in features.items():
-            if f not in LIKELIHOOD:
+            if f not in table:
                 continue
-            p = LIKELIHOOD[f].get(rc, BASE_RATE)
+            p = table[f].get(rc, BASE_RATE)
             lp += math.log(p if present else 1 - p)
         if llm_hypothesis in classes():
             lp += math.log(alpha if rc == llm_hypothesis else (1 - alpha) / (k - 1))
