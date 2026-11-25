@@ -1,24 +1,25 @@
 # Objective 3 - incident resolution evaluation
 
-Generated 2026-11-25T15:12:41 by `python -m evaluation.eval_incident`.
+Generated 2026-11-25T20:27:29 by `python -m evaluation.eval_incident`.
 
-## A. Injected faults in the simulated services (8 fault types)
+## A. Injected faults in the simulated services (11 fault types)
 
 | Metric | rules | agentic |
 |---|---|---|
-| Runs (faults x reps) | 16 | 16 |
+| Runs (faults x reps) | 22 | 22 |
 | Root-service accuracy | 1.0 | 1.0 |
-| RCA top-1 | 1.0 | 0.938 |
+| RCA top-1 | 1.0 | 1.0 |
 | RCA top-3 | 1.0 | 1.0 |
 | Remediation action correct | 1.0 | 1.0 |
-| Resolution rate | 1.0 | 1.0 |
-| Escalation rate | 0.0 | 0.0 |
-| Needed approval | 0.5 | 0.438 |
-| MTTR mean (s, injection -> verified) | 18.4 | 25.8 |
-| MTTR median (s) | 13.7 | 20.8 |
+| Correct final outcome | 1.0 | 1.0 |
+| Resolution rate | 0.909 | 0.909 |
+| Escalation rate | 0.091 | 0.091 |
+| Needed approval | 0.455 | 0.455 |
+| MTTR mean (s, injection -> verified) | 20.6 | 23.0 |
+| MTTR median (s) | 2.8 | 5.6 |
 | Rollbacks | 0 | 0 |
 | Lab healthy after RESOLVED | 1.0 | 1.0 |
-| Not resolved |  |  |
+| Wrong final outcome |  |  |
 
 ## B. Dataset test incidents: root_cause_category from creation-time text
 

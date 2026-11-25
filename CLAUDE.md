@@ -88,7 +88,7 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 ## Code layout
 - `src/common/config.py` — paths, EMBED_MODEL=BAAI/bge-small-en-v1.5 (384-d, query instruction prefix), SEED=42,
   TEST_FRACTION=0.20, RRF_K=60, BM25_K1=1.2, BM25_B=0.75, WEAK_EVIDENCE_COSINE=0.55. `check_db.py`.
-- `src/common/llm.py` — old `gemini_json` (to be removed when agents use the router, 2.4).
+- (`src/common/llm.py`, the old `gemini_json`, was removed in the Phase 6 clean-up: nothing imported it.)
 - `src/common/llm_router.py` — `complete_json(agent, prompt, Schema, system=, fallback=)` -> LLMResult
   (method llm|rule-based|none, data, provider, model, latency_s, tokens, fallback, attempts, summary()).
   CALLERS dict (gemini/groq/ollama) is what tests patch with fake LLMs.
@@ -219,6 +219,10 @@ Phase 4 evaluation (evaluation/results/incident_eval_summary.md, Nov 25 2026):
   0.268 / 0.588, + k-NN 0.263 / 0.598, + LLM (60) 0.283 / 0.633; k-NN majority top-1 0.325, LLM alone 0.255,
   alpha calibrated on train = 0.267.
 - Live ServiceNow: INC0010049 (CAB approval -> rollback deployment -> Resolved), INC0010052/53 auto-Resolved.
+Phase 6 incident evaluation (11 faults incl. VPN, x 2; incident_eval_summary.md lab part; replaces the 8-fault
+lab table there): rules / agentic root 1.0 / 1.0, top-1 1.0 / 1.0, top-3 1.0 / 1.0, action 1.0 / 1.0, correct
+final outcome 1.0 / 1.0, resolution 0.909 / 0.909 (monitoring tunnel outages escalated by POL-0004), MTTR 20.6 /
+23.0 s; agentic LLM answered 48 %. Phase 6 live: INC0010061-69 (VPN faults, portals, approvals, e-mail).
 Phase 5 ablations (evaluation/results/ablations_summary.md, Nov 25 2026; LLM calls answered in brackets):
 - Access, 52 requests: final state 0.981 in all variants (rules, rules-noret, multi 0.84, multi-noret 0.79,
   single gpt-oss-20b 0.21, single qwen3.8-27b 0.81); decision 0.981 except single qwen 0.962 (removal requests
@@ -288,7 +292,8 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   run LLM-heavy evaluations one at a time and count LLM vs fallback calls from logs/llm_calls.jsonl.
 - logs/llm_calls.jsonl truncates provider error texts (the exact Groq limit name is not kept).
 - Phase-1 tickets (INC0010001-24) have no checkpoint: `list`/`show` show decision/target as None for them.
-  data/agent_state.db is unused since 2.8 (gitignored; can be deleted by the user).
+  data/agent_state.db (unused since 2.8) was deleted in the Phase 6 clean-up, with the empty scaffold folders
+  config/, objective1_dataset/, simulated_services/, endpoint_service/actions/, src/agents/, src/api/.
 - Test incidents INC0010025-40 (selftest, live runs, sweep test) remain on the PDI, all closed or escalated.
   INC0010029 (Gemini) was ESCALATED by the LLM critic before the catalogue-note fix (expected then, see 2.6).
   INC0010030 (github.com, Phase-2 test, was On Hold) was cancelled at the user's request (Nov 25 2026); its
@@ -661,7 +666,15 @@ CLI-only (approvers see requests in ServiceNow + get emails, decide with `cli ap
       process each worker poll: ServiceNow sent it -> drop; not sent after 180 s -> SMTP + work note; local desk
       -> SMTP at once; temporary desks never mail. `cli notify [--now] [--test USER]`; SMTP test mail OK.
       Known: approvers on the watch list also get the platform "comments added" mail of the ticket.)
-- [ ] 6.6 End-to-end live test, docs (README, CLAUDE.md, PROJECT_HISTORY), evaluation re-run for 11 faults.
+- [x] 6.6 End-to-end live test, docs (README, CLAUDE.md, PROJECT_HISTORY), evaluation re-run for 11 faults.
+      (Nov 25 2026: eval_incident --part lab, 11 faults x 2, rules / agentic: root 1.0 / 1.0, top-1 1.0 / 1.0,
+      top-3 1.0 / 1.0, action 1.0 / 1.0, correct final outcome 1.0 / 1.0 (new metric: expected_final per fault;
+      vpn_tunnel_down via monitoring = ESCALATED by POL-0004), resolution 0.909 / 0.909, MTTR 20.6 / 23.0 s, 0
+      rollbacks. Agentic run: 48 % of LLM calls answered (RCA 11/29, critic 1/20, communication 22/22; rest
+      rule-based, free-tier quota). Live end to end by the user (6.2-6.5). README: step-by-step demonstration of
+      every service. Clean-up: empty scaffold folders, unused src/common/llm.py, data/agent_state.db removed.)
+
+**Phase 6 COMPLETE (Nov 25 2026)** — branch phase-6-portal-network merged into main.
 
 ---------------------------------------------------------------------------------------------------------------
 # API KEY / ACCOUNT GUIDE

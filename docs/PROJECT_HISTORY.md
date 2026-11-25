@@ -341,3 +341,55 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
   check clean, prepare + ingest (274 s) reproduce the retrieval table exactly, ServiceNow checks OK, 170 tests OK,
   all agent chains answer, endpoint self-test OK, both demos live, dashboard OK. Lessons: two checkouts share the
   lab ports (stop one lab first) and keep separate checkpoints; the reset must run where the endpoint service runs.
+
+## 15. Phase 6 - VPN/network lab, employee logins + portals, e-mail (Nov 25 2026, branch phase-6-portal-network)
+User request after Phase 5: "a network/VPN service in the lab, notifications to people, real logins for the
+employees, and how users raise tickets from their Windows portal". Decisions (asked): both portals (ServiceNow
+Service Portal + local Windows app), both e-mail channels (ServiceNow + SMTP fallback), logins for employee01,
+manager01 and the 6 approvers, approvals stay CLI-only.
+- 6.1 vpn-gateway (port 9105, remote-access path vpn-gateway -> web): IPsec tunnel (runtime state: a restart
+  re-establishes it), DNS resolver cache + zone record (dns.json) and the VPN profile (profile.json) on disk.
+  Faults vpn_tunnel_down / dns_failure / vpn_credential_expired mapped to dataset SOP-0004 / SOP-0001 / SOP-0010;
+  catalogue actions carry the SOP action names (RESTART_NETWORK_DEVICE, UPDATE_DNS_RECORD = flush + re-sync,
+  PROVISION_VPN_PROFILE) with rollback specs. RCA: tool check_vpn, features tunnel_down / dns_failure /
+  vpn_profile_expired + log patterns, likelihood rows, category definitions; network incidents about the VPN use
+  the dataset's VPN prior.
+  * Policy finding (not bent): POL-0004's eligible roles exclude the monitoring on-call role
+    SITE_RELIABILITY_ENGINEER -> rule engine DENY. The policy role of an incident is now the reporter's role (like
+    the requester role of an access request): monitoring -> SRE (tunnel outage escalated), an employee's own report
+    -> the employee's title (DEVELOPER: allowed -> tunnel restarted). The evaluation gives each fault an expected
+    final outcome (vpn_tunnel_down via monitoring = ESCALATED).
+  * Bugs found live: settle() reset only DIRECT dependents -> the gateway (two hops above orders-api/cache) stayed
+    "degraded" on stale errors after a fix and would have caused a false incident -> transitive dependents; a lab
+    service took > 30 s to start with 0.7 GB RAM free -> start timeout 60 s.
+  * Live: INC0010061 (profile, ReAct used check_vpn, 74 s), INC0010062 (DNS, serviceowner01 approved),
+    INC0010063 (monitoring tunnel -> DENY -> ESCALATED), INC0010064 (employee01 "cannot connect to the VPN" ->
+    restart -> RESOLVED 21 s).
+- 6.2/6.3/6.5 ServiceNow (src/integrations/servicenow_portal_setup.py, admin web session, idempotent, --check /
+  --test): users already allowed web login and the PDI has no snc_internal role -> no role changes; passwords set
+  by the user. Record producer "AI Service Desk request" (caller, category, group AI Service Desk, self-service).
+  E-mail had NEVER worked on this PDI: glide.email.smtp.active=false and no outgoing mail account -> 399 queued
+  mails marked send-ignored, property on, outgoing account through Gmail SMTP (app password), demo users get
+  plus-addresses of one inbox, ai.agent notifications off (its @example.com mails would bounce). Notification
+  "AI Service Desk: approval needed" -> watch list; the agents put the approvers on the watch list in the SAME
+  update that sets approval=requested. Reference fields come back as {link, value} -> normalised in the setup's
+  diff (second run crashed before).
+- 6.4 IT Help (src/portal): the identity problem - a page on 127.0.0.1 cannot tell which Windows user calls it ->
+  per-user token in the user's own profile (ACL: user + Administrators + SYSTEM), only the hash stored, desktop
+  shortcut runs a launcher as the employee, session cookie (HttpOnly, SameSite=Strict), CSRF token, own tickets
+  only, rate limit. FastAPI form fields need python-multipart -> parsed with urllib instead (no new dependency).
+- 6.5 SMTP fallback (src/common/notify.py): every customer-visible message is queued; the worker drops it when
+  ServiceNow sent a mail for that incident (ai.agent can read sys_email), else sends it by SMTP after 180 s. Tests
+  found that temporary desks (tests, evaluations) and a fake ServiceNow queued real mails, and that one desk could
+  deliver another's entries -> entries carry their ticket system; temporary desks never mail.
+- Live acceptance by the user as employee01: IT Help -> INC0010067 Gemini RESOLVED, INC0010068 ChatGPT DENY;
+  ServiceNow portal with the real login -> INC0010069 GitHub -> manager01 REFUSED, security01 approved ->
+  RESOLVED; 9/9 ServiceNow mails 'sent' incl. "Approval needed". The user's .env edit had emptied the two address
+  lines (pasted template) -> restored at the user's request.
+- Clean-up (user's request): removed empty scaffold folders (config/, objective1_dataset/, simulated_services/,
+  endpoint_service/actions/, src/agents/, src/api/), the unused src/common/llm.py and data/agent_state.db.
+  README got a step-by-step demonstration of every service as employee01.
+- 6.6 evaluation, 11 faults x 2 (rules / agentic): root service 1.0 / 1.0, top-1 1.0 / 1.0, top-3 1.0 / 1.0,
+  remediation action 1.0 / 1.0, correct final outcome 1.0 / 1.0, resolution 0.909 / 0.909 (the monitoring tunnel
+  outages, escalated by POL-0004 as intended), MTTR 20.6 / 23.0 s, 0 rollbacks. Agentic run: 48 % of LLM calls
+  answered (RCA 11/29, critic 1/20, communication 22/22) - free-tier quota again; decisions unaffected.
