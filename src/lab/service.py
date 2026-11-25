@@ -3,9 +3,10 @@
 Public endpoints:  GET /health  (status ok|degraded + checks)   GET /metrics   GET /logs?n=50
                    POST /work   (one business request; web -> orders-api -> cache, worker -> spool file)
 Admin endpoints (X-Lab-Token, used ONLY by the fault injector and the remediation action catalogue):
-  POST /admin/fault {"name", "on"}       runtime faults: memory_leak, db_session_leak, cache_bloat
+  POST /admin/fault {"name", "on"}       runtime faults: memory_leak, db_session_leak, cache_bloat, tunnel_down
   POST /admin/cache/clear                POST /admin/db/terminate_sessions     POST /admin/reload
-State on disk (data/lab/<name>/): deploy.json (release + config + history), cert.json, spool/, service.log.
+State on disk (data/lab/<name>/): deploy.json (release + config + history), cert.json, spool/, service.log;
+vpn-gateway also dns.json (zone record + resolver cache) and profile.json (VPN profile = remote-user credential).
 Runtime faults live in the process (a restart clears them, like a real leak); disk faults survive restarts.
 """
 from __future__ import annotations
@@ -38,6 +39,17 @@ def default_cert():
             "serial": "LAB-0001"}
 
 
+def default_dns():
+    """vpn-gateway resolver: authoritative zone record + resolver cache (empty = resolve from the zone)."""
+    return {"zone": {C.INTERNAL_HOST: C.INTERNAL_ADDR}, "cache": {}}
+
+
+def default_profile():
+    """The VPN profile (client credential) remote employees connect with."""
+    return {"not_after": (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(timespec="seconds"),
+            "serial": "VPN-0001"}
+
+
 class Fault(BaseModel):
     name: str
     on: bool = True
@@ -51,6 +63,11 @@ def build_app(name: str) -> FastAPI:
         C.write_json(d / "deploy.json", default_deploy())
     if not (d / "cert.json").exists():
         C.write_json(d / "cert.json", default_cert())
+    if name == "vpn-gateway":
+        if not (d / "dns.json").exists():
+            C.write_json(d / "dns.json", default_dns())
+        if not (d / "profile.json").exists():
+            C.write_json(d / "profile.json", default_profile())
 
     log = logging.getLogger(f"lab.{name}")
     log.setLevel(logging.INFO)
@@ -84,6 +101,25 @@ def build_app(name: str) -> FastAPI:
 
     def memory_mb():
         return round(60 + st["leaked_mb"], 1)
+
+    # --------------------------------------------------------------- vpn-gateway state (6.1)
+    def resolve(host):
+        """Resolver: a cached answer wins (also a cached NXDOMAIN); otherwise the authoritative zone record."""
+        dns = C.read_json(d / "dns.json", default_dns())
+        hit = dns.get("cache", {}).get(host)
+        if hit is not None:
+            return hit.get("addr")                       # None = cached negative answer (NXDOMAIN)
+        return dns.get("zone", {}).get(host)
+
+    def dns_ok():
+        return resolve(C.INTERNAL_HOST) == C.INTERNAL_ADDR
+
+    def profile_days_left():
+        p = C.read_json(d / "profile.json", default_profile())
+        return (datetime.fromisoformat(p["not_after"]) - datetime.now(timezone.utc)).total_seconds() / 86400
+
+    def tunnel_up():
+        return "tunnel_down" not in st["faults"]
 
     # --------------------------------------------------------------- background "traffic" (leaks grow over time)
     def ticker():
@@ -141,6 +177,25 @@ def build_app(name: str) -> FastAPI:
                     log.warning("DB session not returned to pool (in use %d/%d)", st["pool_in_use"], size)
         elif name == "cache":
             time.sleep(min(len(st["cache"]) / 20000, 3))     # bloated cache -> slow lookups
+        elif name == "vpn-gateway":                         # one remote employee session -> the shop web app
+            if profile_days_left() < 0:
+                p = C.read_json(d / "profile.json", {})
+                raise RuntimeError(f"VPN authentication failed for remote user: VPN profile {p.get('serial')} expired "
+                                   f"{-profile_days_left():.1f} days ago (credential no longer valid)")
+            if not tunnel_up():
+                raise RuntimeError("IPsec tunnel to dc-1 (198.51.100.7) is down: IKE SA not established, "
+                                   "dead peer detection timeout")
+            addr = resolve(C.INTERNAL_HOST)
+            if addr != C.INTERNAL_ADDR:
+                raise RuntimeError(f"DNS resolution failed for {C.INTERNAL_HOST}: "
+                                   + ("NXDOMAIN (answer from the resolver cache)" if addr is None else
+                                      f"resolved to {addr}, connection refused"))
+            try:
+                r = requests.post(C.url("web", "/work"), timeout=4)
+            except requests.RequestException as e:
+                raise RuntimeError(f"upstream web unreachable through the tunnel: {type(e).__name__}") from None
+            if r.status_code != 200:
+                raise RuntimeError(f"upstream web returned HTTP {r.status_code}: {r.text[:120]}")
         elif name == "worker":
             if disk_used_pct() >= 99:
                 raise RuntimeError("OSError: [Errno 28] No space left on device (spool volume)")
@@ -171,12 +226,16 @@ def build_app(name: str) -> FastAPI:
     def metrics_dict():
         lat = list(st["latencies"])
         res = list(st["results"])
-        return {"service": name, "pid": os.getpid(), "uptime_s": round(time.time() - st["started"]),
-                "requests": st["requests"], "latency_ms": round(sum(lat) / len(lat), 1) if lat else 0.0,
-                "error_rate": round(1 - sum(res) / len(res), 3) if res else 0.0,
-                "memory_mb": memory_mb(), "disk_used_pct": disk_used_pct(), "cache_items": len(st["cache"]),
-                "pool_in_use": st["pool_in_use"], "pool_size": pool_size(),
-                "cert_days_left": round(cert_days_left(), 2), "release": deploy()["version"]}
+        m = {"service": name, "pid": os.getpid(), "uptime_s": round(time.time() - st["started"]),
+             "requests": st["requests"], "latency_ms": round(sum(lat) / len(lat), 1) if lat else 0.0,
+             "error_rate": round(1 - sum(res) / len(res), 3) if res else 0.0,
+             "memory_mb": memory_mb(), "disk_used_pct": disk_used_pct(), "cache_items": len(st["cache"]),
+             "pool_in_use": st["pool_in_use"], "pool_size": pool_size(),
+             "cert_days_left": round(cert_days_left(), 2), "release": deploy()["version"]}
+        if name == "vpn-gateway":
+            m.update(tunnel="up" if tunnel_up() else "down", dns_ok=dns_ok(),
+                     profile_days_left=round(profile_days_left(), 2))
+        return m
 
     @app.get("/metrics")
     def metrics():
@@ -194,6 +253,10 @@ def build_app(name: str) -> FastAPI:
             checks["db_pool"] = m["pool_size"] - m["pool_in_use"] >= C.POOL_FREE_MIN
         if name == "worker":
             checks["disk"] = m["disk_used_pct"] <= C.DISK_PCT_MAX
+        if name == "vpn-gateway":
+            checks["tunnel"] = m["tunnel"] == "up"
+            checks["dns"] = m["dns_ok"]
+            checks["vpn_profile"] = m["profile_days_left"] >= 0
         for dep in C.SERVICES[name]["deps"]:
             try:
                 checks[f"dependency:{dep}"] = requests.get(C.url(dep, "/metrics"), timeout=1).status_code == 200
@@ -214,7 +277,7 @@ def build_app(name: str) -> FastAPI:
     @app.post("/admin/fault")
     def fault(f: Fault, x_lab_token: str = Header(default="")):
         admin(x_lab_token)
-        if f.name not in ("memory_leak", "db_session_leak", "cache_bloat"):
+        if f.name not in ("memory_leak", "db_session_leak", "cache_bloat", "tunnel_down"):
             raise HTTPException(400, f"unknown runtime fault {f.name}")
         with lock:
             (st["faults"].add if f.on else st["faults"].discard)(f.name)

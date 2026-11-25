@@ -34,7 +34,7 @@ def _log(name, level, msg):
 def traffic(n: int = 8) -> None:
     """A few business requests so metrics and logs show the symptom."""
     for _ in range(n):
-        for svc in ("web", "worker"):
+        for svc in ("web", "worker", "vpn-gateway"):
             try:
                 requests.post(C.url(svc, "/work"), timeout=5)
             except requests.RequestException:
@@ -80,6 +80,21 @@ def inject(fault: str) -> dict:
         cert = C.read_json(d / "cert.json", {})
         cert["not_after"] = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
         C.write_json(d / "cert.json", cert)
+    elif fault == "vpn_tunnel_down":
+        _log(svc, "WARNING", "dead peer detection: no response from peer dc-1 (198.51.100.7) after 5 retries")
+        _log(svc, "ERROR", "IPsec tunnel dc-1 down: IKE SA deleted, child SA rekey failed")
+        _admin(svc, "/admin/fault", {"name": "tunnel_down", "on": True})
+    elif fault == "dns_failure":
+        dns = C.read_json(d / "dns.json", {})
+        dns.setdefault("cache", {})[C.INTERNAL_HOST] = {"addr": None, "negative": True,
+                                                        "cached_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        C.write_json(d / "dns.json", dns)
+        _log(svc, "WARNING", f"resolver: negative answer for {C.INTERNAL_HOST} cached (NXDOMAIN, ttl 86400) after a "
+                             "zone transfer hiccup")
+    elif fault == "vpn_credential_expired":
+        prof = C.read_json(d / "profile.json", {})
+        prof["not_after"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+        C.write_json(d / "profile.json", prof)
     elif fault == "db_pool_exhausted":
         _admin(svc, "/admin/fault", {"name": "db_session_leak", "on": True})
         for _ in range(6):
@@ -96,7 +111,7 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     if cmd == "list":
         for k, v in C.FAULTS.items():
-            print(f"{k:<18} {v['service']:<11} {v['describe']}")
+            print(f"{k:<23} {v['service']:<12} {v['describe']}")
     elif cmd == "inject" and len(sys.argv) == 3:
         print(inject(sys.argv[2]))
         for n, s in S.status().items():

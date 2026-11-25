@@ -113,6 +113,8 @@ def eval_lab(modes, reps, retriever, pace) -> tuple[list[dict], dict]:
                         (gt["action"], gt["service"]), attempts=v.get("attempts", 0),
                         rollbacks=sum(a["action"] == "ROLLBACK" for a in audit),
                         resolved=t["state"] == "RESOLVED", lab_healthy=all(h["status"] == "ok" for h in health.values()),
+                        expected_final=gt.get("expected_final", "RESOLVED"),
+                        outcome_ok=t["state"] == gt.get("expected_final", "RESOLVED"),
                         mttr_s=round(mttr, 1) if t["state"] == "RESOLVED" else None,
                         llm_used=r.get("llm_used"), critic=(v.get("critic") or {}).get("verdict"))
                     rows.append(row)
@@ -133,6 +135,8 @@ def eval_lab(modes, reps, retriever, pace) -> tuple[list[dict], dict]:
             "rca_top3": round(sum(r["top3_ok"] for r in m) / n, 3),
             "action_accuracy": round(sum(r["action_ok"] for r in m) / n, 3),
             "resolution_rate": round(sum(r["resolved"] for r in m) / n, 3),
+            # correct final outcome (RESOLVED, or ESCALATED where the policy forbids the automatic fix - 6.1)
+            "outcome_accuracy": round(sum(r["outcome_ok"] for r in m) / n, 3),
             "escalation_rate": round(sum(r["final"] == "ESCALATED" for r in m) / n, 3),
             "approval_rate": round(sum(bool(r["approved_by"]) for r in m) / n, 3),
             "mttr_s_mean": mean([r["mttr_s"] for r in m if r["mttr_s"] is not None]),
@@ -141,7 +145,7 @@ def eval_lab(modes, reps, retriever, pace) -> tuple[list[dict], dict]:
             "rollbacks": sum(r["rollbacks"] for r in m),
             "lab_healthy_after_resolved": round(sum(r["lab_healthy"] for r in m if r["resolved"]) /
                                                 max(1, sum(r["resolved"] for r in m)), 3),
-            "misses": [f"{r['fault']}#{r['rep']}:{r['final']}" for r in m if not r["resolved"]],
+            "misses": [f"{r['fault']}#{r['rep']}:{r['final']}" for r in m if not r["outcome_ok"]],
         }
         print(f"{mode}: {json.dumps(summary[mode])}")
     return rows, summary
@@ -242,12 +246,14 @@ def write_markdown(s: dict) -> None:
     if lab:
         keys = [("runs", "Runs (faults x reps)"), ("root_service_accuracy", "Root-service accuracy"),
                 ("rca_top1", "RCA top-1"), ("rca_top3", "RCA top-3"), ("action_accuracy", "Remediation action correct"),
-                ("resolution_rate", "Resolution rate"), ("escalation_rate", "Escalation rate"),
+                ("outcome_accuracy", "Correct final outcome"), ("resolution_rate", "Resolution rate"),
+                ("escalation_rate", "Escalation rate"),
                 ("approval_rate", "Needed approval"), ("mttr_s_mean", "MTTR mean (s, injection -> verified)"),
                 ("mttr_s_median", "MTTR median (s)"), ("rollbacks", "Rollbacks"),
-                ("lab_healthy_after_resolved", "Lab healthy after RESOLVED"), ("misses", "Not resolved")]
+                ("lab_healthy_after_resolved", "Lab healthy after RESOLVED"), ("misses", "Wrong final outcome")]
         modes = list(lab)
-        lines += ["## A. Injected faults in the simulated services (8 fault types)", "",
+        from src.lab.config import FAULTS
+        lines += [f"## A. Injected faults in the simulated services ({len(FAULTS)} fault types)", "",
                   "| Metric | " + " | ".join(modes) + " |", "|---|" + "---|" * len(modes)]
         for k, label in keys:
             vals = [lab[m].get(k) for m in modes]

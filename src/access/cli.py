@@ -94,6 +94,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     n = sub.add_parser("new", help="raise an access ticket"); n.add_argument("text")
     n.add_argument("--user", default="employee01")
+    n.add_argument("--category", default="access", help="access (default) or a problem category: network, "
+                   "internal_applications, software, hardware, database (incident flow)")
     p = sub.add_parser("process", help="run the agents on one ticket or all NEW ones")
     p.add_argument("number", nargs="?"); p.add_argument("--all", action="store_true")
     a = sub.add_parser("approve", help="approver decision (checked against the ticket system)")
@@ -108,6 +110,9 @@ def main():
     tr = sub.add_parser("trace"); tr.add_argument("number")
     sub.add_parser("list")
     sub.add_parser("grants")
+    nt = sub.add_parser("notify", help="deliver pending e-mails ServiceNow did not send (SMTP fallback)")
+    nt.add_argument("--now", action="store_true", help="do not wait the grace period")
+    nt.add_argument("--test", metavar="USER", help="send one test e-mail to USER's address by SMTP")
     sub.add_parser("demo")
     for sp in (p, a, w, sw, sub.choices["demo"]):
         sp.add_argument("--no-retrieval", action="store_true")
@@ -125,7 +130,7 @@ def main():
     source = get_source(args.source).attach_checkpoints(saver)
 
     if args.cmd == "new":
-        num = source.create(args.user, args.text)
+        num = source.create(args.user, args.text, category=args.category)
         print(f"Created {num}  {source.link(num)}")
     elif args.cmd == "show":
         show(source, args.number)
@@ -136,6 +141,15 @@ def main():
         for g in endpoint_client.grants():
             print(f"{g['ticket_id']}  {g['action']:<18} {g['params']}  expires {g['expires_at']}"
                   + ("  DUE" if g["due"] else ""))
+    elif args.cmd == "notify":
+        from src.common import notify
+        if args.test:
+            ok, detail = notify.send_smtp([source.user_email(args.test)], "AI Service Desk: SMTP test",
+                                          f"Test e-mail for {args.test} from the agents' SMTP fallback.")
+            print(f"SMTP test to {args.test}: {'OK' if ok else 'FAILED'} ({detail})")
+            sys.exit(0 if ok else 1)
+        res = notify.process(source, grace_s=0 if args.now else notify.GRACE_S, out=print)
+        print(f"{len(res)} pending message(s) handled")
     elif args.cmd == "list":
         for r in source.list():
             print(f"{r['number']}  {r['state']:<18} {str(r['decision']):<20} {str(r['target']):<28} {r['created_at']}")

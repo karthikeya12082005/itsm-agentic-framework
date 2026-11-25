@@ -26,8 +26,10 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   Integration user ai.agent (Internal Integration User + itil + approval_admin + snc_basic_auth_api_access).
   **LEAN DESIGN (user's decision, Nov 24 2026):** the **Incident table for everything** — access requests are
   incidents with category `access` (built-in "Access & Password"), free text, caller employee01, assignment group
-  "AI Service Desk"; Objective 3 incidents use the normal categories. NO catalog items. Human users (employee01,
-  manager01, security01) are **records without logins** (no passwords). **Approvals are given through the CLI**
+  "AI Service Desk"; Objective 3 incidents use the normal categories. (Phase 6 update, user's decision Nov 25
+  2026: employee01, manager01 and the 6 approvers now HAVE web logins (passwords set by the user in the UI, no
+  roles needed on this PDI); ONE record producer "AI Service Desk request" is the Service Portal entry; e-mail via
+  ServiceNow notifications through a Gmail SMTP account + the agents' SMTP fallback.) **Approvals are given through the CLI**
   (`approve <INC> --by <user>`, approver checked in code against ServiceNow: LINE_MANAGER = caller's manager,
   SECURITY_TEAM = member of group "IT Security") and **recorded on the incident** by ai.agent: approval field
   requested -> approved/rejected, state On Hold while waiting, work notes naming approver, group and policy
@@ -70,8 +72,10 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 - Python 3.12.5, venv `.venv` (`.\.venv\Scripts\Activate.ps1`). Use `python`, not `py -3.11`.
 - Restricted local standard user: `employee01` (role DEVELOPER, manager manager01). Admin user: Karthikeya.
 - Neon serverless PostgreSQL 18.7 (was 18.6; Neon upgrades minor versions) + pgvector 0.8.6 (Singapore).
-- `.env` (NEVER commit, never print values; single-quoted values) has the same 17 keys, in the same order, as the
-  committed template `.env.example`. Set so far (Nov 24 2026): DATABASE_URL (rotated), ENDPOINT_URL,
+- `.env` (NEVER commit, never print values; single-quoted values) has the same 22 keys, in the same order, as the
+  committed template `.env.example` (Phase 6 added NOTIFY_DEMO_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER,
+  SMTP_PASSWORD (Gmail App Password of itsmclaude@gmail.com, secret; NOTIFY_DEMO_EMAIL/SMTP_USER set by Claude at
+  the user's request; SERVICENOW_ADMIN_PASSWORD cleared again after the Phase 6 setup). Set so far (Nov 24 2026): DATABASE_URL (rotated), ENDPOINT_URL,
   ENDPOINT_TOKEN (rotated, 40 chars), SERVICENOW_INSTANCE (dev219979), SERVICENOW_USER, GEMINI_API_KEY,
   GEMINI_MODEL_LITE, GROQ_API_KEY, OLLAMA_BASE_URL, HF_TOKEN (read), SERVICENOW_PASSWORD (ai.agent),
   SERVICENOW_ADMIN_PASSWORD (CLEARED after 1.2; admin password reset Nov 24 2026 — put it back only temporarily
@@ -84,7 +88,7 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
 ## Code layout
 - `src/common/config.py` — paths, EMBED_MODEL=BAAI/bge-small-en-v1.5 (384-d, query instruction prefix), SEED=42,
   TEST_FRACTION=0.20, RRF_K=60, BM25_K1=1.2, BM25_B=0.75, WEAK_EVIDENCE_COSINE=0.55. `check_db.py`.
-- `src/common/llm.py` — old `gemini_json` (to be removed when agents use the router, 2.4).
+- (`src/common/llm.py`, the old `gemini_json`, was removed in the Phase 6 clean-up: nothing imported it.)
 - `src/common/llm_router.py` — `complete_json(agent, prompt, Schema, system=, fallback=)` -> LLMResult
   (method llm|rule-based|none, data, provider, model, latency_s, tokens, fallback, attempts, summary()).
   CALLERS dict (gemini/groq/ollama) is what tests patch with fake LLMs.
@@ -141,6 +145,10 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   commands (echoed); reset = lab healthy, dry-run list of active endpoint grants (`-Apply` rolls back through the
   service), open agent tickets (`-CancelOpen`).
 - `README.md` — setup, architecture (mermaid), run steps, results.
+- Phase 6: `src/lab` vpn-gateway (port 9105) + 3 network faults + RESTART_NETWORK_DEVICE / UPDATE_DNS_RECORD /
+  PROVISION_VPN_PROFILE; `src/incident` check_vpn tool, VPN features/likelihoods, keyword_service, policy_role
+  (reporter's role); `src/integrations/servicenow_portal_setup.py`; `src/portal/` (IT Help) +
+  `scripts/portal/install_it_help.ps1`; `src/common/notify.py` (SMTP fallback queue data/notify/pending.json).
 - `tests/` — stdlib unittest (no pytest): `python -m unittest discover -s tests -t . -v`.
 - Full history of decisions and problems solved so far: `docs/PROJECT_HISTORY.md` (read it).
 
@@ -162,6 +170,11 @@ python -m src.access.cli --source local demo      # offline SQLite desk
 python -m src.access.cli --rules-only ...         # no LLM; --llm-single groq:openai/gpt-oss-20b = one model for all agents
 python -m src.common.check_llms --agents          # per-agent model chain check
 python -m src.dashboard [--source local]          # read-only dashboard http://127.0.0.1:8800
+python -m src.portal                              # IT Help portal for employees http://127.0.0.1:8810
+python -m src.access.cli new --category network "I cannot connect to the VPN"   # problem ticket for employee01
+python -m src.access.cli notify [--now] [--test employee01]                    # SMTP fallback / test mail
+python -m src.integrations.servicenow_portal_setup [--check|--test]           # needs admin password (setup only)
+# Admin terminal, once per Windows user:  powershell -ExecutionPolicy Bypass -File scripts\portal\install_it_help.ps1 -UserName employee01
 powershell -ExecutionPolicy Bypass -File scripts\demo_access.ps1 [-AutoApprove] [-Local] [-RulesOnly]
 powershell -ExecutionPolicy Bypass -File scripts\demo_incident.ps1 [-Fault bad_config] [-AutoApprove]
 powershell -ExecutionPolicy Bypass -File scripts\reset_demo.ps1 [-Apply] [-CancelOpen]
@@ -206,6 +219,10 @@ Phase 4 evaluation (evaluation/results/incident_eval_summary.md, Nov 25 2026):
   0.268 / 0.588, + k-NN 0.263 / 0.598, + LLM (60) 0.283 / 0.633; k-NN majority top-1 0.325, LLM alone 0.255,
   alpha calibrated on train = 0.267.
 - Live ServiceNow: INC0010049 (CAB approval -> rollback deployment -> Resolved), INC0010052/53 auto-Resolved.
+Phase 6 incident evaluation (11 faults incl. VPN, x 2; incident_eval_summary.md lab part; replaces the 8-fault
+lab table there): rules / agentic root 1.0 / 1.0, top-1 1.0 / 1.0, top-3 1.0 / 1.0, action 1.0 / 1.0, correct
+final outcome 1.0 / 1.0, resolution 0.909 / 0.909 (monitoring tunnel outages escalated by POL-0004), MTTR 20.6 /
+23.0 s; agentic LLM answered 48 %. Phase 6 live: INC0010061-69 (VPN faults, portals, approvals, e-mail).
 Phase 5 ablations (evaluation/results/ablations_summary.md, Nov 25 2026; LLM calls answered in brackets):
 - Access, 52 requests: final state 0.981 in all variants (rules, rules-noret, multi 0.84, multi-noret 0.79,
   single gpt-oss-20b 0.21, single qwen3.8-27b 0.81); decision 0.981 except single qwen 0.962 (removal requests
@@ -275,7 +292,8 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   run LLM-heavy evaluations one at a time and count LLM vs fallback calls from logs/llm_calls.jsonl.
 - logs/llm_calls.jsonl truncates provider error texts (the exact Groq limit name is not kept).
 - Phase-1 tickets (INC0010001-24) have no checkpoint: `list`/`show` show decision/target as None for them.
-  data/agent_state.db is unused since 2.8 (gitignored; can be deleted by the user).
+  data/agent_state.db (unused since 2.8) was deleted in the Phase 6 clean-up, with the empty scaffold folders
+  config/, objective1_dataset/, simulated_services/, endpoint_service/actions/, src/agents/, src/api/.
 - Test incidents INC0010025-40 (selftest, live runs, sweep test) remain on the PDI, all closed or escalated.
   INC0010029 (Gemini) was ESCALATED by the LLM critic before the catalogue-note fix (expected then, see 2.6).
   INC0010030 (github.com, Phase-2 test, was On Hold) was cancelled at the user's request (Nov 25 2026); its
@@ -587,6 +605,76 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
       The clone folder D:\itsm-clean-test (it held a .env copy) was deleted by the user afterwards.)
 
 **Phase 5 COMPLETE (Nov 25 2026)** — branch phase-5-final merged into main. ALL TODO items done.
+
+## Phase 6 — VPN/network lab, employee logins + portals, notifications (user's request, Nov 25 2026)
+User decisions (Nov 25 2026, branch phase-6-portal-network): ticket entry = BOTH the ServiceNow Service Portal
+(employees with logins) AND a local Windows portal app; notifications = BOTH ServiceNow email notifications AND
+SMTP from the agents as fallback; real logins for employee01, manager01 and the 6 approver users; approvals stay
+CLI-only (approvers see requests in ServiceNow + get emails, decide with `cli approve`).
+- [x] 6.1 Lab: `vpn-gateway` service (port 9105, remote-access path vpn-gateway -> web; tunnel, DNS resolver, VPN
+      profile). Faults vpn_tunnel_down (NETWORK_FAILURE, SOP-0004 RESTART_NETWORK_DEVICE, POL-0004 ALLOW),
+      dns_failure (DNS_MISCONFIGURATION, SOP-0001 UPDATE_DNS_RECORD = flush resolver cache + re-sync record,
+      POL-0001 AWA IT_SERVICE_OWNER), vpn_credential_expired (EXPIRED_CREDENTIAL, SOP-0010 PROVISION_VPN_PROFILE,
+      POL-0010 ALLOW). Actions with rollback specs; RCA tool check_vpn + evidence features + likelihoods; monitor
+      category network; free-text "VPN" reports triaged to vpn-gateway. Test: all 11 faults rules-only resolved,
+      live ServiceNow incident for each VPN fault.
+      (Nov 25 2026. Catalogue actions carry the SOP action names (plan requires action_type in the catalogue).
+      Policy finding: POL-0004's user_role excludes the monitoring on-call role SITE_RELIABILITY_ENGINEER -> rule
+      engine DENY. Not bent: policy role = the reporter's role (monitoring -> SRE, employee ticket -> the
+      employee's title), like the access flow. Live: INC0010061 VPN profile expired -> ReAct used check_vpn ->
+      EXPIRED_CREDENTIAL -> PROVISION_VPN_PROFILE -> RESOLVED 74 s; INC0010062 DNS -> security01 REFUSED,
+      serviceowner01 approved -> UPDATE_DNS_RECORD -> RESOLVED; INC0010063 monitoring tunnel outage -> DENY (SRE not
+      eligible under POL-0004) -> ESCALATED; INC0010064 employee01 "cannot connect to the VPN" (`cli new --category
+      network`) -> LLM triage vpn-gateway -> POL-0004 ALLOW for DEVELOPER -> RESTART_NETWORK_DEVICE -> RESOLVED 21 s.
+      Rules-only live check all 11 faults OK after a fix: settle() reset only DIRECT dependents -> the gateway (two
+      hops above orders-api/cache) stayed degraded on stale errors -> transitive dependents. Lab start timeout 30 ->
+      60 s (a start took > 30 s with 0.7 GB RAM free). 37 lab/incident tests.)
+- [x] 6.2 ServiceNow logins: users get web login (not web-service-only), roles for the portal; passwords set by the
+      user in the UI (API password writes have no effect). Test: each user can log in; employee01 sees only own
+      tickets.
+      (Nov 25 2026: the 8 users were already active, not web-service-only, without roles; this PDI has NO
+      snc_internal role, so users without roles use the portals - no role change. User set the 8 passwords in the
+      UI. Live: employee01 signed in to /sp and submitted INC0010069 itself (sys_created_by employee01);
+      impersonation test: employee01 reads 0 incidents of other callers.)
+- [x] 6.3 ServiceNow Service Portal entry: a portal form ("AI Service Desk: request access / report a problem")
+      creating an incident with caller = logged-in user, category access or a problem category, assignment group
+      AI Service Desk, so the worker picks it up; replies (comments) visible to the employee in the portal.
+      (src/integrations/servicenow_portal_setup.py (admin, idempotent, --check / --test): record producer "AI
+      Service Desk request" (sys_id aceaf74dc3f49390a471df0d0501310f; URL /sp?id=sc_cat_item&sys_id=...), variables
+      request_type (access | network | internal_applications | software | hardware) + details; producer script
+      sets caller, category, group AI Service Desk, self-service. --test as employee01 (admin impersonation):
+      INC0010065 OK. Live by the user: INC0010069 GitHub -> AWAITING -> manager01 REFUSED -> security01 approved ->
+      RESOLVED. TicketSource.create(..., category) + `cli new --category` for problem tickets.)
+- [x] 6.4 Local Windows portal app (127.0.0.1, desktop shortcut for employee01): raise a ticket + see own tickets
+      and agent replies; the Windows user is identified without exposing .env to employee01.
+      (src/portal (`python -m src.portal`, port 8810, run by the project owner): token per Windows user in the
+      user's own profile (ACL user + Administrators + SYSTEM; only the SHA-256 in data/portal/tokens.json);
+      scripts/portal/install_it_help.ps1 (Administrator) = token + read-only launcher in C:\ProgramData\ITSM-Portal
+      + desktop shortcut "IT Help". Session cookie HttpOnly/SameSite=Strict, CSRF token, own tickets only (404
+      otherwise), 10 tickets/h, replies = ServiceNow comments journal (TicketSource.messages). No new dependency
+      (form parsed with urllib; python-multipart not installed). Live: INC0010066 VPN (HTTP test) RESOLVED; the
+      user as employee01 via the shortcut: INC0010067 Gemini RESOLVED, INC0010068 ChatGPT DENY. tests/test_portal.py.)
+- [x] 6.5 Notifications: ServiceNow email notifications (caller: comments/resolved/escalated; approver group:
+      approval requested) + SMTP fallback from the Communication Agent (new .env keys); check PDI outbound email.
+      (Found: glide.email.smtp.active=false AND no outgoing account (sys_email_account empty) - 399 mails had
+      queued since setup. Setup: backlog -> send-ignored, property on, SMTP account "Gmail SMTP (AI Service Desk
+      demo)" (smtp.gmail.com:587 STARTTLS, itsmclaude@gmail.com, app password), demo users' e-mail = plus-addresses
+      (itsmclaude+employee01@gmail.com ...), ai.agent notifications off (its @example.com mails would bounce).
+      Notification "AI Service Desk: approval needed" (approval -> requested, recipients = watch list; the agents put
+      the approvers on the watch list in the same update). Caller mails = platform notifications. Live: 9/9 mails
+      'sent' incl. "Approval needed: INC0010069". SMTP fallback (src/common/notify.py): queue per message,
+      process each worker poll: ServiceNow sent it -> drop; not sent after 180 s -> SMTP + work note; local desk
+      -> SMTP at once; temporary desks never mail. `cli notify [--now] [--test USER]`; SMTP test mail OK.
+      Known: approvers on the watch list also get the platform "comments added" mail of the ticket.)
+- [x] 6.6 End-to-end live test, docs (README, CLAUDE.md, PROJECT_HISTORY), evaluation re-run for 11 faults.
+      (Nov 25 2026: eval_incident --part lab, 11 faults x 2, rules / agentic: root 1.0 / 1.0, top-1 1.0 / 1.0,
+      top-3 1.0 / 1.0, action 1.0 / 1.0, correct final outcome 1.0 / 1.0 (new metric: expected_final per fault;
+      vpn_tunnel_down via monitoring = ESCALATED by POL-0004), resolution 0.909 / 0.909, MTTR 20.6 / 23.0 s, 0
+      rollbacks. Agentic run: 48 % of LLM calls answered (RCA 11/29, critic 1/20, communication 22/22; rest
+      rule-based, free-tier quota). Live end to end by the user (6.2-6.5). README: step-by-step demonstration of
+      every service. Clean-up: empty scaffold folders, unused src/common/llm.py, data/agent_state.db removed.)
+
+**Phase 6 COMPLETE (Nov 25 2026)** — branch phase-6-portal-network merged into main.
 
 ---------------------------------------------------------------------------------------------------------------
 # API KEY / ACCOUNT GUIDE

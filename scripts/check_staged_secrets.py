@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET_KEYS = {"DATABASE_URL", "ENDPOINT_TOKEN", "SERVICENOW_PASSWORD", "SERVICENOW_ADMIN_PASSWORD",
-               "GEMINI_API_KEY", "GROQ_API_KEY", "HF_TOKEN"}
+               "GEMINI_API_KEY", "GROQ_API_KEY", "HF_TOKEN", "SMTP_PASSWORD"}
 PATTERNS = {
     "groq key": r"gsk_[A-Za-z0-9]{20,}",
     "google key": r"\b(?:AIza[0-9A-Za-z_\-]{30,}|AQ\.[0-9A-Za-z_\-]{30,})",

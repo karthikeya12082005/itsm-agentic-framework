@@ -275,6 +275,11 @@ def run_poller(source, graph, interval: float = 30, once: bool = False, out=prin
             except Exception as e:  # noqa: BLE001 - one bad ticket must not stop the worker
                 log.exception("processing %s", number)
                 out(f"{number}: FAILED to process ({type(e).__name__}: {e})")
+        try:                                       # 6.5: SMTP fallback for messages the ticket system did not send
+            from src.common import notify
+            notify.process(source, out=out)
+        except Exception as e:  # noqa: BLE001 - notifications must never stop the worker
+            out(f"notify failed: {type(e).__name__}: {e}")
         if once:
             return 0
         try:
