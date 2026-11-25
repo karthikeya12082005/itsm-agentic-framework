@@ -179,6 +179,15 @@ Phase 3 evaluation (evaluation/results/access_eval_summary.md, Nov 25 2026):
   the critic's stricter-rule-reading check escalates - intended), automation 0.846 / 0.827, escalation
   0.135 / 0.154, approval 0.288 / 0.288, verification 1.0 / 1.0, MTTR 0.43 s / 4.35 s, agentic fallbacks 30.6 %
   all to the secondary provider (Gemini 429 quota), 0 rule-based.
+Phase 4 evaluation (evaluation/results/incident_eval_summary.md, Nov 25 2026):
+- Lab, 8 injected faults x 2 reps (rules / agentic): root service 1.0 / 1.0, RCA top-1 1.0 / 0.938, top-3
+  1.0 / 1.0, remediation action 1.0 / 1.0, resolution 1.0 / 1.0, escalation 0 / 0, approval 0.5 / 0.438,
+  MTTR mean 18.4 s / 25.8 s (median 13.7 / 20.8), rollbacks 0, lab healthy after every RESOLVED. Agentic run:
+  RCA LLM answered 11/20, critic LLM 9/17 (rest rule-based fallback: Groq 429 long Retry-After, Gemini 503/429).
+- Dataset test incidents (194), top-1 / top-3: prior 0.196 / 0.521, naive Bayes (learned text likelihoods)
+  0.268 / 0.588, + k-NN 0.263 / 0.598, + LLM (60) 0.283 / 0.633; k-NN majority top-1 0.325, LLM alone 0.255,
+  alpha calibrated on train = 0.267.
+- Live ServiceNow: INC0010049 (CAB approval -> rollback deployment -> Resolved), INC0010052/53 auto-Resolved.
 Root cause of the old slow first ticket: ~20 s lazy load of the embedding model inside the first k-NN lookup
 (+ Gemini timeouts) -> model loaded at worker start (17 s) + LLM warm-up puts down models in cooldown.
 
@@ -230,6 +239,9 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   calls were skipped (cooldowns) - its numbers were not used.
 - Groq free tier rate-limits gpt-oss-120b (HTTP 429 after ~4 critic calls within a minute, ~1.2k tokens each).
   Batch evaluation (3.5 / 5.1) must pace calls or accept fallbacks; the router logs every fallback.
+  After ~90 RCA calls in one session gpt-oss-120b answered 429 with ~6-7 min Retry-After (longer-window quota):
+  run LLM-heavy evaluations one at a time and count LLM vs fallback calls from logs/llm_calls.jsonl.
+- logs/llm_calls.jsonl truncates provider error texts (the exact Groq limit name is not kept).
 - Phase-1 tickets (INC0010001-24) have no checkpoint: `list`/`show` show decision/target as None for them.
   data/agent_state.db is unused since 2.8 (gitignored; can be deleted by the user).
 - Test incidents INC0010025-40 (selftest, live runs, sweep test) remain on the PDI, all closed or escalated.
@@ -490,8 +502,15 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
       DEPLOYMENT_CHANGE -> POL-0043 needs CAB -> aigov01 REFUSED, cab01 approved -> ROLLBACK_DEPLOYMENT ->
       verified -> RESOLVED; INC0010052 memory leak -> POL-0046 ALLOW -> restart -> RESOLVED 34 s; INC0010053 disk
       full -> FREE_DISK_SPACE -> RESOLVED 12.9 s. tests/test_incident.py 11 tests (fake lab).)
-- [ ] 4.6 Evaluation: RCA top-1/top-3 on injected faults and on dataset test tickets (root_cause_category), MTTR,
+- [x] 4.6 Evaluation: RCA top-1/top-3 on injected faults and on dataset test tickets (root_cause_category), MTTR,
       resolution rate, rollback correctness.
+      (`python -m evaluation.eval_incident [--part lab|dataset] [--pace N] [--report]`; results in
+      evaluation/results/incident_eval_summary.{json,md} + incident_eval_{lab,dataset}.csv. Numbers: see "Results
+      so far". Found and fixed on the way: deployment 0.0 min ago treated as none; resource-exhaustion likelihoods
+      over-penalised absent symptoms; Neon idle-connection drop (reconnect); router honours Retry-After.
+      Rollback correctness: actions.rollback tested in tests/test_lab.py + live in 4.2; 0 rollbacks needed in eval.)
+
+**Phase 4 COMPLETE (Nov 25 2026)** — branch phase-4-incidents merged into main.
 
 ## Phase 5 — Final evaluation, UI and demo
 - [ ] 5.1 Ablations: single LLM vs multi-LLM; with vs without retrieval; rules-only vs agentic; per-provider latency.
