@@ -3,7 +3,8 @@
                       ┌──────────────────────── supervisor ────────────────────────┐
  START ─> supervisor ─┤  (input guardrails, flow selection, deterministic routing)  ├─> END
                       └─▲───▲───▲───▲───▲───▲───▲───▲───────────────────────────────┘
-                        │   │   │   │   │   │   │   └ incident flow (Objective 3, Phase 4) / handoff
+                        │   │   │   │   │   │   │   └ incident flow (Objective 3): triage, retrieve, rca, plan,
+                        │   │   │   │   │   │   │     critic, (approval), remediate, verify, rollback, communicate
           understand ───┘   │   │   │   │   │   └ communicate (Communication Agent, LLM)
           retrieve ─────────┘   │   │   │   └ verify (predicate check)
           decide (rules) ───────┘   │   └ execute (enforcement service)
@@ -27,6 +28,7 @@ from langgraph.graph import END, START, StateGraph
 
 from src.access import agents
 from src.access.critic import critic
+from src.incident import agents as incident_agents
 from src.orchestrator.guardrails import check_input
 from src.orchestrator.state import AgentState
 from src.orchestrator.trace import step, timed
@@ -44,7 +46,7 @@ def route(s: dict) -> str:
     if s.get("done"):
         return END
     if s.get("flow") == "incident":
-        return "incident"
+        return incident_agents.route(s)
     if "understanding" not in s:
         return "understand"
     u = s["understanding"]
@@ -100,14 +102,7 @@ def supervisor(s):
     return upd
 
 
-def incident_handoff(s):
-    """Placeholder until the Objective-3 incident agents exist (Phase 4): hand the ticket to a human."""
-    msg = "Your incident has been passed to the IT team; we will update you."
-    return {"final_state": "ESCALATED", "user_message": msg, "done": True,
-            "trace": [step("Supervisor", "incident flow not available yet -> handed to the Service Desk")]}
-
-
-def build_graph(retriever=None, checkpointer=None, rewrite_query: bool = True, incident_node=None):
+def build_graph(retriever=None, checkpointer=None, rewrite_query: bool = True):
     """Compile the supervisor graph. Without a checkpointer approvals cannot pause (tests pass InMemorySaver)."""
     g = StateGraph(AgentState)
     g.add_node("supervisor", supervisor)
@@ -124,11 +119,21 @@ def build_graph(retriever=None, checkpointer=None, rewrite_query: bool = True, i
         "await_user": timed(agents.await_user),
         "verify": timed(agents.verification),
         "communicate": timed(agents.communicate),
-        "incident": timed(incident_node or incident_handoff),
+        # ---- incident flow (Objective 3)
+        "triage": timed(incident_agents.triage),
+        "incident_retrieve": timed(lambda s: incident_agents.retrieve(s, retriever)),
+        "rca": timed(incident_agents.root_cause_analysis),
+        "incident_plan": timed(incident_agents.plan),
+        "incident_critic": timed(incident_agents.incident_critic),
+        "incident_request_approval": timed(incident_agents.request_approval),
+        "remediate": timed(incident_agents.remediate),
+        "incident_verify": timed(incident_agents.verify),
+        "incident_rollback": timed(incident_agents.rollback),
+        "incident_communicate": timed(incident_agents.communicate),
     }
     for name, fn in nodes.items():
         g.add_node(name, fn)
-        if name == "request_approval":
+        if name in ("request_approval", "incident_request_approval"):
             g.add_edge(name, "await_approval")
         elif name == "request_user_action":
             g.add_edge(name, "await_user")

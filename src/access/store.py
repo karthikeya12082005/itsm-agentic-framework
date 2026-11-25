@@ -23,6 +23,9 @@ class TicketStore:
             state TEXT NOT NULL, decision TEXT, approval_status TEXT, target TEXT, policy_id TEXT, sop_id TEXT,
             created_at TEXT NOT NULL, acknowledged_at TEXT, resolved_at TEXT,
             context TEXT, work_notes TEXT NOT NULL DEFAULT '[]', user_message TEXT)""")
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(tickets)")}
+        if "category" not in cols:                         # Phase 4: incidents have other categories
+            self.db.execute("ALTER TABLE tickets ADD COLUMN category TEXT")
         self.db.commit()
 
     def _next_number(self):
@@ -30,10 +33,10 @@ class TicketStore:
         n = int(row["number"][4:]) + 1 if row else 9000001        # local range, no clash with dataset IDs
         return f"RITM{n:07d}"
 
-    def create(self, requester, description):
+    def create(self, requester, description, category="access"):
         number = self._next_number()
-        self.db.execute("INSERT INTO tickets (number, requester, description, state, created_at) VALUES (?,?,?,?,?)",
-                        (number, requester, description, "NEW", now()))
+        self.db.execute("INSERT INTO tickets (number, requester, description, state, created_at, category) "
+                        "VALUES (?,?,?,?,?,?)", (number, requester, description, "NEW", now(), category))
         self.db.commit()
         return number
 

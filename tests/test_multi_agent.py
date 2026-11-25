@@ -1,4 +1,4 @@
-"""Phase 2 tests: supervisor routing, LLM agents with FAKE LLMs, critic, communication checks, checkpointer
+﻿"""Phase 2 tests: supervisor routing, LLM agents with FAKE LLMs, critic, communication checks, checkpointer
 (interrupt/resume across processes, stuck-ticket sweep), trace, network-off fallback. Offline.
 
     python -m unittest tests.test_multi_agent -v
@@ -159,7 +159,7 @@ class SupervisorRouting(unittest.TestCase):
         ok = {"verdict": "APPROVE"}
         cases = [
             ({"flow": "access"}, "understand"),
-            ({"flow": "incident"}, "incident"),
+            ({"flow": "incident"}, "triage"),
             ({"understanding": known}, "retrieve"),
             ({"understanding": {"known_target": False}}, "decide"),
             ({"understanding": known, "evidence": {}}, "decide"),
@@ -211,17 +211,6 @@ class RulesOnlyCritic(Base):
         n, final = self.run_ticket("Please REMOVE gemini.google.com from my allowed sites, I no longer need it.")
         v = self.values(n)
         self.assertEqual((v["policy"]["decision"], v["critic"]["verdict"], final), ("ALLOW", "ESCALATE", "ESCALATED"))
-        self.assertEqual(self.ep.executed, [])
-
-
-class IncidentHandoff(Base):
-    use_fake_llm = False
-
-    def test_non_access_category_goes_to_incident_flow(self):
-        n = self.src.create("employee01", "The payroll web app is down")
-        t = {**self.src.get(n), "category": "software", "state": "IN_PROGRESS"}
-        out = self.graph.invoke({"ticket": t, "trace": []}, cp.config("x|" + n))
-        self.assertEqual((out["flow"], out["final_state"]), ("incident", "ESCALATED"))
         self.assertEqual(self.ep.executed, [])
 
 

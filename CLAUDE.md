@@ -125,6 +125,7 @@ GitHub: karthikeya12082005 / itsm-agentic-framework (private).
   `python -m src.integrations.servicenow_client smoke [--write]`), servicenow_setup.py (1.2, lean design:
   user records, groups IT Security + AI Service Desk, APPROVER_GROUPS map; setup needs admin, `--test` runs
   as ai.agent only).
+- `src/incident/` (Phase 4) — agents.py (incident nodes + route), rca.py, bayes.py, evidence.py, tools.py.
 - `src/lab/` (Phase 4) — config.py (SERVICES, thresholds, FAULTS ground truth), service.py, supervisor.py,
   faults.py, actions.py (remediation action catalogue + audit data/lab/audit.jsonl + rollback).
 - `tests/` — stdlib unittest (no pytest): `python -m unittest discover -s tests -t . -v`.
@@ -454,12 +455,36 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
       src/lab/config.FAULTS (eval only). Live Nov 25 2026: every fault injected -> symptom on /health -> its
       catalogue action (src/lab/actions.py, audited, rollback specs) -> all services healthy again. Symptoms
       spread like real ones (cache bloat -> latency on web, orders-api AND cache). tests/test_lab.py 9 tests.)
-- [ ] 4.3 Monitoring -> auto-create ServiceNow INCIDENT with symptoms/observed state/diagnostic data.
-- [ ] 4.4 RCA Agent: ReAct diagnosis loop with tools (check health, read logs, read metrics) + LLM hypotheses +
+- [x] 4.3 Monitoring -> auto-create ServiceNow INCIDENT with symptoms/observed state/diagnostic data.
+      (src/lab/monitor.py `--once | --interval 15`: synthetic transactions + /health of all services; failing
+      services grouped into INDEPENDENT events by dependency relation (live finding: two unrelated faults were
+      first merged into one incident -> the fix for one could never verify); one incident per event, reported on
+      the customer-facing service, through TicketSource.create_incident (caller = ai.agent, group AI Service
+      Desk, category from the failing checks only: hardware / database / performance / internal_applications -
+      never access); description = affected service, symptoms, observed state, last log lines; de-duplicated
+      while open (data/lab/monitor_state.json). Live: INC0010049, INC0010052, INC0010053.)
+- [x] 4.4 RCA Agent: ReAct diagnosis loop with tools (check health, read logs, read metrics) + LLM hypotheses +
       Bayesian root-cause ranking (priors from historical_incidents, likelihoods from evidence).
-- [ ] 4.5 Remediation via SOP actions (fixed action catalogue: restart service, rollback config, clear cache,
+      (src/incident: tools.py (9 read-only tools), rca.py (ReAct, LLM_RCA picks one tool per step, max 4, then
+      hypotheses; deterministic evidence completion; category definitions in the prompt), evidence.py (root
+      service by dependency analysis + binary features), bayes.py (prior P(rc | category) from the TRAIN split +
+      k-NN of retrieved similar incidents, likelihood table, LLM top hypothesis as noisy observation alpha 0.6).
+      Live check, 8 faults: rules-only root 8/8, top-1 7/8, top-3 8/8; with the LLM top-1 6/8 (taxonomy framing:
+      leak = "software defect", dependency crash = "software defect") -> alpha to be calibrated in 4.6.
+      Live fixes: OOM log line counted as both crash and OOM (naive-Bayes double count) -> separated.)
+- [x] 4.5 Remediation via SOP actions (fixed action catalogue: restart service, rollback config, clear cache,
       scale worker, rotate cert...), policy check, critic review, execution, predicate verification,
       retry <= 2, rollback on failure, escalate otherwise.
+      (src/incident/agents.py nodes in the supervisor graph: triage, incident_retrieve, rca, incident_plan
+      (remediation map root cause + evidence -> SOP -> catalogue action on the root service; dataset policy of
+      the SOP via the rule engine with role SITE_RELIABILITY_ENGINEER; posterior < 0.5 -> ESCALATE),
+      incident_critic (rules + critic LLM; ITIL: restoring service is incident mgmt, code fix = problem mgmt),
+      approval (shared await_approval interrupt; approvers from the new groups), remediate (src/lab/actions.py),
+      incident_verify (root + affected service healthy), incident_rollback, retry with the next plan only if it
+      needs no other approval, then ESCALATED. Live: INC0010049 bad release -> ReAct (4 tools) ->
+      DEPLOYMENT_CHANGE -> POL-0043 needs CAB -> aigov01 REFUSED, cab01 approved -> ROLLBACK_DEPLOYMENT ->
+      verified -> RESOLVED; INC0010052 memory leak -> POL-0046 ALLOW -> restart -> RESOLVED 34 s; INC0010053 disk
+      full -> FREE_DISK_SPACE -> RESOLVED 12.9 s. tests/test_incident.py 11 tests (fake lab).)
 - [ ] 4.6 Evaluation: RCA top-1/top-3 on injected faults and on dataset test tickets (root_cause_category), MTTR,
       resolution rate, rollback correctness.
 
