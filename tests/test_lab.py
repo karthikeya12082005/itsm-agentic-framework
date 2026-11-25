@@ -86,7 +86,64 @@ class Services(LabCase):
         self.assertEqual(o.get("/metrics").json()["pool_in_use"], 0)
 
 
+class VpnGateway(LabCase):
+    """6.1: the three VPN failure modes fail a remote session BEFORE it reaches web (no network calls needed)."""
+
+    def test_expired_profile(self):
+        g = self.client("vpn-gateway")
+        d = C.service_dir("vpn-gateway")
+        C.write_json(d / "profile.json", {"not_after": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                                          "serial": "VPN-X"})
+        r = g.post("/work")
+        self.assertEqual(r.status_code, 500)
+        self.assertIn("VPN authentication failed", r.json()["detail"])
+        self.assertFalse(g.get("/health").json()["checks"]["vpn_profile"])
+
+    def test_tunnel_down_runtime_fault(self):
+        g = self.client("vpn-gateway")
+        g.post("/admin/fault", json={"name": "tunnel_down", "on": True}, headers=self.token)
+        self.assertIn("IPsec tunnel", g.post("/work").json()["detail"])
+        h = g.get("/health").json()
+        self.assertFalse(h["checks"]["tunnel"])
+        self.assertTrue(h["checks"]["dns"])
+
+    def test_stale_dns_cache(self):
+        g = self.client("vpn-gateway")
+        d = C.service_dir("vpn-gateway")
+        dns = C.read_json(d / "dns.json", {})
+        dns["cache"][C.INTERNAL_HOST] = {"addr": None}
+        C.write_json(d / "dns.json", dns)
+        self.assertIn("NXDOMAIN", g.post("/work").json()["detail"])
+        self.assertFalse(g.get("/metrics").json()["dns_ok"])
+
+
 class ActionCatalogue(LabCase):
+    def test_vpn_actions_only_on_the_gateway(self):
+        with self.assertRaises(A.ActionError):
+            A.execute("UPDATE_DNS_RECORD", "web", "INC1", "AUTH")
+
+    def test_update_dns_record_and_restore(self):
+        self.client("vpn-gateway")                       # creates the default state files
+        d = C.service_dir("vpn-gateway")
+        bad = {"zone": {C.INTERNAL_HOST: C.INTERNAL_ADDR}, "cache": {C.INTERNAL_HOST: {"addr": None}}}
+        C.write_json(d / "dns.json", bad)
+        rec = A.execute("UPDATE_DNS_RECORD", "vpn-gateway", "INC4", "AUTH")
+        self.assertEqual(rec["status"], "SUCCEEDED")
+        self.assertEqual(C.read_json(d / "dns.json", {})["cache"], {})
+        A.rollback(rec["action_id"], "INC4")              # restores the recorded before-state
+        self.assertEqual(C.read_json(d / "dns.json", {}), bad)
+
+    def test_provision_vpn_profile_and_restore(self):
+        self.client("vpn-gateway")
+        d = C.service_dir("vpn-gateway")
+        old = {"not_after": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(), "serial": "VPN-OLD"}
+        C.write_json(d / "profile.json", old)
+        rec = A.execute("PROVISION_VPN_PROFILE", "vpn-gateway", "INC5", "AUTH")
+        new = C.read_json(d / "profile.json", {})
+        self.assertGreater(datetime.fromisoformat(new["not_after"]), datetime.now(timezone.utc))
+        A.rollback(rec["action_id"], "INC5")
+        self.assertEqual(C.read_json(d / "profile.json", {}), old)
+
     def test_unknown_action_refused(self):
         with self.assertRaises(A.ActionError):
             A.execute("DROP_DATABASE", "orders-api", "INC1", "AUTH")

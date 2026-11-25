@@ -8,7 +8,8 @@ ticket system (ServiceNow by default) through the TicketSource interface - never
 Correlation: one incident per independent event (dependency-related failures belong together), opened on the CUSTOMER-FACING impacted service (web or worker) and listing
 every failing service with its checks, metrics and the tail of its log. Finding the ROOT service and cause is
 the RCA Agent's job. The category comes from the failing checks only (the monitor never reads the fault
-ground truth): disk -> hardware, db_pool -> database, only latency -> performance, else internal_applications.
+ground truth): tunnel/dns/vpn_profile -> network, disk -> hardware, db_pool -> database, only latency ->
+performance, else internal_applications.
 De-duplication: while an incident for the same entry service is open, no new one is created
 (data/lab/monitor_state.json).
 """
@@ -23,7 +24,8 @@ import requests
 from src.lab import config as C
 
 STATE = "monitor_state.json"
-ENTRY = ["web", "worker"]                         # customer-facing services
+ENTRY = ["web", "worker", "vpn-gateway"]         # customer-facing services (vpn-gateway: remote employees)
+NETWORK_CHECKS = {"tunnel", "dns", "vpn_profile"}
 MARKER = "[lab-monitor]"
 
 
@@ -97,6 +99,8 @@ def entry_service(snap: dict, probs: dict) -> str:
 
 def category(snap: dict, probs: dict) -> str:
     failing = {c for s in snap.values() for c in s["failing"]}
+    if failing & NETWORK_CHECKS:
+        return "network"
     if "disk" in failing:
         return "hardware"
     if "db_pool" in failing:
@@ -107,7 +111,7 @@ def category(snap: dict, probs: dict) -> str:
 
 
 KEY_METRICS = ("latency_ms", "error_rate", "memory_mb", "disk_used_pct", "pool_in_use", "pool_size",
-               "cert_days_left", "release", "cache_items")
+               "cert_days_left", "release", "cache_items", "tunnel", "dns_ok", "profile_days_left")
 
 
 def describe(snap: dict, probs: dict, entry: str) -> tuple[str, str, int, int]:

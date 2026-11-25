@@ -588,6 +588,30 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
 
 **Phase 5 COMPLETE (Nov 25 2026)** — branch phase-5-final merged into main. ALL TODO items done.
 
+## Phase 6 — VPN/network lab, employee logins + portals, notifications (user's request, Nov 25 2026)
+User decisions (Nov 25 2026, branch phase-6-portal-network): ticket entry = BOTH the ServiceNow Service Portal
+(employees with logins) AND a local Windows portal app; notifications = BOTH ServiceNow email notifications AND
+SMTP from the agents as fallback; real logins for employee01, manager01 and the 6 approver users; approvals stay
+CLI-only (approvers see requests in ServiceNow + get emails, decide with `cli approve`).
+- [ ] 6.1 Lab: `vpn-gateway` service (port 9105, remote-access path vpn-gateway -> web; tunnel, DNS resolver, VPN
+      profile). Faults vpn_tunnel_down (NETWORK_FAILURE, SOP-0004 RESTART_NETWORK_DEVICE, POL-0004 ALLOW),
+      dns_failure (DNS_MISCONFIGURATION, SOP-0001 UPDATE_DNS_RECORD = flush resolver cache + re-sync record,
+      POL-0001 AWA IT_SERVICE_OWNER), vpn_credential_expired (EXPIRED_CREDENTIAL, SOP-0010 PROVISION_VPN_PROFILE,
+      POL-0010 ALLOW). Actions with rollback specs; RCA tool check_vpn + evidence features + likelihoods; monitor
+      category network; free-text "VPN" reports triaged to vpn-gateway. Test: all 11 faults rules-only resolved,
+      live ServiceNow incident for each VPN fault.
+- [ ] 6.2 ServiceNow logins: users get web login (not web-service-only), roles for the portal; passwords set by the
+      user in the UI (API password writes have no effect). Test: each user can log in; employee01 sees only own
+      tickets.
+- [ ] 6.3 ServiceNow Service Portal entry: a portal form ("AI Service Desk: request access / report a problem")
+      creating an incident with caller = logged-in user, category access or a problem category, assignment group
+      AI Service Desk, so the worker picks it up; replies (comments) visible to the employee in the portal.
+- [ ] 6.4 Local Windows portal app (127.0.0.1, desktop shortcut for employee01): raise a ticket + see own tickets
+      and agent replies; the Windows user is identified without exposing .env to employee01.
+- [ ] 6.5 Notifications: ServiceNow email notifications (caller: comments/resolved/escalated; approver group:
+      approval requested) + SMTP fallback from the Communication Agent (new .env keys); check PDI outbound email.
+- [ ] 6.6 End-to-end live test, docs (README, CLAUDE.md, PROJECT_HISTORY), evaluation re-run for 11 faults.
+
 ---------------------------------------------------------------------------------------------------------------
 # API KEY / ACCOUNT GUIDE
 Rules for Claude: whenever a key/account is needed, give the user numbered click-by-click steps (website, button

@@ -5,7 +5,7 @@ import re
 
 from src.lab import config as C
 
-DEPTH = {"cache": 0, "orders-api": 1, "worker": 1, "web": 2}     # deeper = closer to the root of a chain
+DEPTH = {"cache": 0, "orders-api": 1, "worker": 1, "web": 2, "vpn-gateway": 3}   # deeper = closer to the root of a chain
 VICTIM_ONLY = {"errors", "latency"}
 LOG_PATTERNS = {
     "crash_in_logs": r"unhandled exception|exited with code|terminated unexpectedly|access violation|FATAL",
@@ -15,6 +15,9 @@ LOG_PATTERNS = {
     "tls_error_in_logs": r"TLS|certificate expired",
     "pool_timeout_in_logs": r"pool exhausted|acquiring DB connection",
     "session_leak_in_logs": r"not returned to pool",
+    "tunnel_error_in_logs": r"IPsec tunnel|IKE SA|dead peer detection",
+    "dns_error_in_logs": r"NXDOMAIN|DNS resolution failed|resolver: negative answer",
+    "auth_error_in_logs": r"VPN authentication failed|profile .* expired|credential no longer valid",
 }
 
 
@@ -42,6 +45,8 @@ def features(obs: dict, root: str, affected: str | None) -> dict[str, bool]:
     get = lambda tool, svc=root: obs.get((tool, svc)) or {}          # noqa: E731
     m, ps, dep, cert, disk = get("read_metrics"), get("process_status"), get("recent_deployments"), \
         get("check_certificate"), get("check_disk")
+    vpn = get("check_vpn")
+    lookup = vpn.get("dns_lookup") or {}
     logs = " \n".join(get("read_logs").get("lines", []))
     up = ps.get("up", get("check_health").get("up", True))
     aff_health = get("check_health", affected) if affected else {}
@@ -59,6 +64,11 @@ def features(obs: dict, root: str, affected: str | None) -> dict[str, bool]:
         "cert_expired": cert.get("days_left") is not None and cert["days_left"] < 0,
         "pool_exhausted": (m.get("pool_size") or 0) > 0 and (m.get("pool_in_use") or 0) >= m.get("pool_size"),
         "high_error_rate": (m.get("error_rate") or 0) > C.ERROR_RATE_MAX,
+        # VPN gateway (6.1): from check_vpn, with the metrics as a second source
+        "tunnel_down": vpn.get("tunnel") == "down" or m.get("tunnel") == "down",
+        "dns_failure": bool(lookup) and lookup.get("answer") != lookup.get("zone_record") or m.get("dns_ok") is False,
+        "vpn_profile_expired": (vpn.get("vpn_profile_days_left") is not None and vpn["vpn_profile_days_left"] < 0)
+        or (m.get("profile_days_left") is not None and m["profile_days_left"] < 0),
     }
     for name, rx in LOG_PATTERNS.items():
         f[name] = bool(re.search(rx, logs, re.I))

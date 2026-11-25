@@ -94,6 +94,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     n = sub.add_parser("new", help="raise an access ticket"); n.add_argument("text")
     n.add_argument("--user", default="employee01")
+    n.add_argument("--category", default="access", help="access (default) or a problem category: network, "
+                   "internal_applications, software, hardware, database (incident flow)")
     p = sub.add_parser("process", help="run the agents on one ticket or all NEW ones")
     p.add_argument("number", nargs="?"); p.add_argument("--all", action="store_true")
     a = sub.add_parser("approve", help="approver decision (checked against the ticket system)")
@@ -125,7 +127,7 @@ def main():
     source = get_source(args.source).attach_checkpoints(saver)
 
     if args.cmd == "new":
-        num = source.create(args.user, args.text)
+        num = source.create(args.user, args.text, category=args.category)
         print(f"Created {num}  {source.link(num)}")
     elif args.cmd == "show":
         show(source, args.number)

@@ -8,6 +8,9 @@ ticket_id, authorization_id, before/after and a rollback spec (None = nothing to
     RENEW_CERTIFICATE      issue a new 90-day certificate               rollback: RESTORE_CERTIFICATE (old one)
     FREE_DISK_SPACE        move old spool files to spool_archive/<id>   rollback: RESTORE_FILES
     TERMINATE_DB_SESSIONS  end leaked database sessions                 rollback: none
+    RESTART_NETWORK_DEVICE restart the VPN gateway (re-establishes the IPsec tunnel)  rollback: none
+    UPDATE_DNS_RECORD      flush the resolver cache + re-sync the record from the zone  rollback: RESTORE_DNS
+    PROVISION_VPN_PROFILE  re-issue the VPN profile (new 365-day credential)          rollback: RESTORE_PROFILE
 
     python -m src.lab.actions rollback <action_id> <ticket>
 """
@@ -32,7 +35,8 @@ def audit_path():
     return C.LAB_DIR / "audit.jsonl"            # resolved at call time (tests use a temporary lab dir)
 _lock = threading.Lock()
 CATALOGUE = ("RESTART_SERVICE", "CLEAR_CACHE", "ROLLBACK_DEPLOYMENT", "RENEW_CERTIFICATE", "FREE_DISK_SPACE",
-             "TERMINATE_DB_SESSIONS")
+             "TERMINATE_DB_SESSIONS", "RESTART_NETWORK_DEVICE", "UPDATE_DNS_RECORD", "PROVISION_VPN_PROFILE")
+VPN_ONLY = {"RESTART_NETWORK_DEVICE", "UPDATE_DNS_RECORD", "PROVISION_VPN_PROFILE"}
 
 
 class ActionError(RuntimeError):
@@ -57,7 +61,14 @@ def _admin(name, path):
 
 def settle(service: str, probes: int = 6) -> None:
     """After a change: clear the old error/latency window and send fresh traffic (metrics reflect the fix)."""
-    targets = [service] + [n for n, s in C.SERVICES.items() if service in s["deps"]]
+    # the service and everything that depends on it, transitively (6.1: vpn-gateway -> web -> orders-api is two
+    # hops; resetting only direct dependents left the gateway "degraded" on stale errors after a fix)
+    targets, todo = [], [service]
+    while todo:
+        s = todo.pop(0)
+        if s not in targets:
+            targets.append(s)
+            todo += [n for n, v in C.SERVICES.items() if s in v["deps"]]
     for t in targets:
         try:
             _admin(t, "/admin/reset_stats")
@@ -76,10 +87,34 @@ def execute(action: str, service: str, ticket_id: str, authorization_id: str) ->
         raise ActionError(f"action {action} is not in the lab action catalogue")
     if service not in C.SERVICES:
         raise ActionError(f"unknown service {service}")
+    if action in VPN_ONLY and service != "vpn-gateway":
+        raise ActionError(f"{action} applies only to the vpn-gateway")
     d = C.service_dir(service)
     before, after, rollback, detail = {}, {}, None, ""
     try:
-        if action == "RESTART_SERVICE":
+        if action == "RESTART_NETWORK_DEVICE":
+            before = {"up": S.up(service)}
+            pid = S.restart(service)
+            after, detail = {"up": S.up(service), "pid": pid}, f"gateway restarted, tunnel re-established (pid {pid})"
+        elif action == "UPDATE_DNS_RECORD":
+            from src.lab.service import default_dns
+            old = C.read_json(d / "dns.json", default_dns())
+            new = {"zone": {**old.get("zone", {}), C.INTERNAL_HOST: C.INTERNAL_ADDR}, "cache": {}}
+            C.write_json(d / "dns.json", new)
+            before = {"cache_entries": len(old.get("cache", {})), "zone": old.get("zone")}
+            after = {"cache_entries": 0, "zone": new["zone"]}
+            detail = (f"resolver cache flushed ({before['cache_entries']} entries), {C.INTERNAL_HOST} -> "
+                      f"{C.INTERNAL_ADDR} re-synced from the zone")
+            rollback = {"action": "RESTORE_DNS", "params": {"service": service, "dns": old}}
+        elif action == "PROVISION_VPN_PROFILE":
+            old = C.read_json(d / "profile.json", {})
+            new = {"not_after": (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(timespec="seconds"),
+                   "serial": f"VPN-{uuid.uuid4().hex[:6].upper()}"}
+            C.write_json(d / "profile.json", new)
+            before, after = {"not_after": old.get("not_after")}, {"not_after": new["not_after"]}
+            detail = f"VPN profile {new['serial']} issued, valid until {new['not_after']}"
+            rollback = {"action": "RESTORE_PROFILE", "params": {"service": service, "profile": old}}
+        elif action == "RESTART_SERVICE":
             before = {"up": S.up(service)}
             pid = S.restart(service)
             after, detail = {"up": S.up(service), "pid": pid}, f"process restarted (pid {pid})"
@@ -154,6 +189,10 @@ def rollback(action_id: str, ticket_id: str) -> dict:
         C.write_json(d / "deploy.json", dep)
     elif rb["action"] == "RESTORE_CERTIFICATE":
         C.write_json(d / "cert.json", p["cert"])
+    elif rb["action"] == "RESTORE_DNS":
+        C.write_json(d / "dns.json", p["dns"])
+    elif rb["action"] == "RESTORE_PROFILE":
+        C.write_json(d / "profile.json", p["profile"])
     elif rb["action"] == "RESTORE_FILES":
         for name in p["files"]:
             src = __import__("pathlib").Path(p["archive"]) / name

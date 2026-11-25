@@ -56,7 +56,8 @@ def up(name: str) -> bool:
         return False
 
 
-def start(name: str, wait_s: float = 30) -> int:
+def start(name: str, wait_s: float = 60) -> int:
+    # 60 s: on this 7.6 GB laptop a service took > 30 s to start once while RAM was paging (0.7 GB free)
     if up(name):
         return _pids().get(name, 0)
     C.LAB_DIR.mkdir(parents=True, exist_ok=True)
@@ -108,11 +109,14 @@ def status() -> dict:
 
 def reset_disk_state() -> None:
     """Healthy release, valid certificate, empty spool, fresh logs - the state before any fault."""
-    from src.lab.service import default_cert, default_deploy
+    from src.lab.service import default_cert, default_deploy, default_dns, default_profile
     for name in C.SERVICES:
         d = C.service_dir(name)
         C.write_json(d / "deploy.json", default_deploy())
         C.write_json(d / "cert.json", default_cert())
+        if name == "vpn-gateway":
+            C.write_json(d / "dns.json", default_dns())
+            C.write_json(d / "profile.json", default_profile())
         shutil.rmtree(d / "spool", ignore_errors=True)
         shutil.rmtree(d / "spool_archive", ignore_errors=True)
         (d / "spool").mkdir(exist_ok=True)
@@ -128,14 +132,14 @@ def reset() -> None:
     for n in C.SERVICES:
         stop(n)
     reset_disk_state()
-    for n in ("cache", "orders-api", "worker", "web"):
+    for n in C.START_ORDER:
         start(n)
 
 
 def main():
     cmd, names = (sys.argv[1] if len(sys.argv) > 1 else "status"), sys.argv[2:] or list(C.SERVICES)
     if cmd == "start":
-        order = [n for n in ("cache", "orders-api", "worker", "web") if n in names]
+        order = [n for n in C.START_ORDER if n in names]
         for n in order:
             print(f"{n}: started pid {start(n)}")
     elif cmd == "stop":

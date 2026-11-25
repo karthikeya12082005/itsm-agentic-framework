@@ -52,8 +52,10 @@ class TicketSource(ABC):
     name = "abstract"
 
     @abstractmethod
-    def create(self, requester: str, text: str) -> str:
-        """Raise a new access ticket for `requester` (user name) with free text. Returns the ticket number."""
+    def create(self, requester: str, text: str, category: str = "access") -> str:
+        """Raise a new ticket for `requester` (user name) with free text, assigned to the agents. category 'access'
+        = access request (access flow); any other category = a problem the employee reports (incident flow, 6.3/6.4).
+        Returns the ticket number."""
 
     @abstractmethod
     def create_incident(self, short: str, description: str, category: str, impact: int = 2,
@@ -178,8 +180,8 @@ class LocalSource(TicketSource):
     def thread_id(self, number):
         return f"local|{self.path.resolve()}|{number}"
 
-    def create(self, requester, text):
-        return self.store.create(requester, text)
+    def create(self, requester, text, category="access"):
+        return self.store.create(requester, text, category=category)
 
     def create_incident(self, short, description, category, impact=2, urgency=2):
         return self.store.create("monitoring", f"{short}\n{description}", category=category)
@@ -338,11 +340,11 @@ class ServiceNowSource(TicketSource):
         return f"SN_STATE_{s}"
 
     # ------------------------------------------------------------------ interface
-    def create(self, requester, text):
+    def create(self, requester, text, category=ACCESS_CATEGORY):
         text = text.strip()
         short = text if len(text) <= 160 else text[:157].rstrip() + "..."
         rec = self.sn.create("incident", {
-            "caller_id": self._user(requester), "category": ACCESS_CATEGORY, "contact_type": "self-service",
+            "caller_id": self._user(requester), "category": category or ACCESS_CATEGORY, "contact_type": "self-service",
             "assignment_group": self._group(AGENT_GROUP), "impact": "3", "urgency": "3",
             "short_description": short, "description": text}, fields="sys_id,number")
         self._cache[f"inc:{rec['number']}"] = rec["sys_id"]

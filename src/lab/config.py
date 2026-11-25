@@ -4,6 +4,8 @@ Topology (an online-shop backend):   web  ->  orders-api  ->  (SQLite DB with a 
                                       |            \\-> cache
                                       \\-> cache
                                       worker (order queue consumer, writes a spool directory)
+Remote employees reach the web app through the VPN gateway (6.1):  vpn-gateway -> web
+  vpn-gateway = IPsec tunnel to the data centre + internal DNS resolver + per-user VPN profiles (credentials).
 """
 from __future__ import annotations
 
@@ -19,7 +21,12 @@ SERVICES = {
     "orders-api": {"port": 9102, "deps": ["cache"], "kind": "REST API with a database connection pool"},
     "cache":      {"port": 9103, "deps": [], "kind": "in-memory cache"},
     "worker":     {"port": 9104, "deps": [], "kind": "queue worker with a spool directory"},
+    "vpn-gateway": {"port": 9105, "deps": ["web"],
+                    "kind": "remote-access VPN gateway (IPsec tunnel, internal DNS resolver, VPN profiles)"},
 }
+START_ORDER = ("cache", "orders-api", "worker", "web", "vpn-gateway")      # dependencies first
+INTERNAL_HOST = "shop.intranet.lab"            # the name remote users resolve through the gateway's DNS
+INTERNAL_ADDR = "10.20.0.15"                   # its correct address (authoritative zone record)
 
 # Health thresholds (monitoring and the verification predicates use the same numbers)
 LATENCY_MS_MAX = 500
@@ -63,6 +70,16 @@ FAULTS = {
                           "action": "RESTART_SERVICE", "dataset_category": "APPLICATION",
                           "sn_category": "internal_applications",
                           "describe": "orders-api is down; web (which depends on it) returns 5xx"},
+    # ---- network / VPN (6.1)
+    "vpn_tunnel_down":   {"service": "vpn-gateway", "root_cause": "NETWORK_FAILURE", "sop": "SOP-0004",
+                          "action": "RESTART_NETWORK_DEVICE", "dataset_category": "VPN", "sn_category": "network",
+                          "describe": "the gateway's IPsec tunnel to the data centre dropped (dead-peer detection)"},
+    "dns_failure":       {"service": "vpn-gateway", "root_cause": "DNS_MISCONFIGURATION", "sop": "SOP-0001",
+                          "action": "UPDATE_DNS_RECORD", "dataset_category": "NETWORK", "sn_category": "network",
+                          "describe": "the gateway's DNS resolver serves a stale record for the internal shop name"},
+    "vpn_credential_expired": {"service": "vpn-gateway", "root_cause": "EXPIRED_CREDENTIAL", "sop": "SOP-0010",
+                          "action": "PROVISION_VPN_PROFILE", "dataset_category": "VPN", "sn_category": "network",
+                          "describe": "the VPN profile (client credential) used by remote employees expired"},
 }
 
 

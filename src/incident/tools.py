@@ -36,7 +36,8 @@ def read_metrics(service: str) -> dict:
     try:
         m = _get(service, "/metrics")
         return {k: m[k] for k in ("service", "latency_ms", "error_rate", "memory_mb", "disk_used_pct", "cache_items",
-                                  "pool_in_use", "pool_size", "cert_days_left", "release", "uptime_s") if k in m}
+                                  "pool_in_use", "pool_size", "cert_days_left", "release", "uptime_s", "tunnel",
+                                  "dns_ok", "profile_days_left") if k in m}
     except (requests.RequestException, ValueError):
         return {"service": service, "up": False}
 
@@ -92,13 +93,38 @@ def check_db_pool(service: str) -> dict:
     return {"service": service, "pool_in_use": m.get("pool_in_use"), "pool_size": m.get("pool_size")}
 
 
+def check_vpn(service: str) -> dict:
+    """VPN gateway diagnostics: tunnel state, a DNS lookup of the internal name, VPN profile validity.
+    (Read from the gateway's metrics and its zone/cache/profile files - a lookup, not a change.)"""
+    if service != "vpn-gateway":
+        return {"service": service, "note": "not a VPN gateway"}
+    d = C.service_dir(service)
+    dns = C.read_json(d / "dns.json", {})
+    cached = (dns.get("cache") or {}).get(C.INTERNAL_HOST)
+    answer = cached.get("addr") if cached is not None else (dns.get("zone") or {}).get(C.INTERNAL_HOST)
+    prof = C.read_json(d / "profile.json", {})
+    try:
+        days = (datetime.fromisoformat(prof["not_after"]) - datetime.now(timezone.utc)).total_seconds() / 86400
+    except (KeyError, ValueError):
+        days = None
+    try:
+        tunnel = _get(service, "/metrics").get("tunnel", "unknown")
+    except (requests.RequestException, ValueError):
+        tunnel = "unknown (gateway not responding)"
+    return {"service": service, "tunnel": tunnel,
+            "dns_lookup": {"name": C.INTERNAL_HOST, "answer": answer or "NXDOMAIN",
+                           "from_cache": cached is not None, "zone_record": (dns.get("zone") or {}).get(C.INTERNAL_HOST)},
+            "vpn_profile_days_left": round(days, 2) if days is not None else None}
+
+
 def check_dependencies(service: str) -> dict:
     return {"service": service, "dependencies": {d: check_health(d)["status"] for d in C.SERVICES[service]["deps"]}}
 
 
 TOOLS = {"process_status": process_status, "check_health": check_health, "read_metrics": read_metrics,
          "read_logs": read_logs, "recent_deployments": recent_deployments, "check_certificate": check_certificate,
-         "check_disk": check_disk, "check_db_pool": check_db_pool, "check_dependencies": check_dependencies}
+         "check_disk": check_disk, "check_db_pool": check_db_pool, "check_dependencies": check_dependencies,
+         "check_vpn": check_vpn}
 TOOL_HELP = {
     "process_status": "is the service's process running (uptime)",
     "check_health": "health status and failing checks",
@@ -109,6 +135,7 @@ TOOL_HELP = {
     "check_disk": "spool volume usage",
     "check_db_pool": "database connection pool usage",
     "check_dependencies": "health of the services it depends on",
+    "check_vpn": "VPN gateway only: IPsec tunnel state, DNS lookup of the internal name, VPN profile expiry",
 }
 
 

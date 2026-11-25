@@ -53,13 +53,32 @@ LIKELIHOOD = {
     "session_leak_in_logs": {"CONFIGURATION_ERROR": 0.6, "SOFTWARE_DEFECT": 0.3},
     "high_error_rate":     {"SOFTWARE_DEFECT": 0.6, "DEPLOYMENT_CHANGE": 0.8, "CONFIGURATION_ERROR": 0.7,
                             "DEPENDENCY_FAILURE": 0.8, "CERTIFICATE_EXPIRY": 0.8, "CAPACITY_LIMIT": 0.3,
-                            "EXPIRED_CREDENTIAL": 0.7, "NETWORK_FAILURE": 0.6},
+                            "EXPIRED_CREDENTIAL": 0.7, "NETWORK_FAILURE": 0.6, "DNS_MISCONFIGURATION": 0.7},
+    # VPN gateway signals (6.1). Each names one mechanism; other causes produce them only rarely.
+    "tunnel_down":         {"NETWORK_FAILURE": 0.85, "HARDWARE_FAULT": 0.3, "CONFIGURATION_ERROR": 0.1,
+                            "FIREWALL_RULE": 0.2},
+    "tunnel_error_in_logs": {"NETWORK_FAILURE": 0.8, "HARDWARE_FAULT": 0.25, "FIREWALL_RULE": 0.2},
+    "dns_failure":         {"DNS_MISCONFIGURATION": 0.9, "NETWORK_FAILURE": 0.15, "CONFIGURATION_ERROR": 0.1},
+    "dns_error_in_logs":   {"DNS_MISCONFIGURATION": 0.85, "NETWORK_FAILURE": 0.2},
+    "vpn_profile_expired": {"EXPIRED_CREDENTIAL": 0.9, "CERTIFICATE_EXPIRY": 0.2},
+    "auth_error_in_logs":  {"EXPIRED_CREDENTIAL": 0.8, "USER_ERROR": 0.3, "CERTIFICATE_EXPIRY": 0.15,
+                            "CONFIGURATION_ERROR": 0.1},
 }
 
 # ServiceNow incident.category -> dataset category used for the prior
 SN_TO_DATASET = {"internal_applications": "APPLICATION", "software": "SOFTWARE", "performance": "APPLICATION",
                  "hardware": "INFRASTRUCTURE", "database": "DATABASE", "network": "NETWORK",
                  "security": "SECURITY", "access": "IDENTITY_ACCESS"}
+
+
+def dataset_category(sn_category: str | None, text: str = "") -> str:
+    """Dataset category for the prior. ServiceNow has no VPN category: a network incident that is about the VPN
+    uses the dataset's VPN category (its own root-cause distribution)."""
+    import re
+    cat = SN_TO_DATASET.get(sn_category or "", "APPLICATION")
+    if cat == "NETWORK" and re.search(r"\bvpn\b", text or "", re.I):
+        return "VPN"
+    return cat
 
 
 @lru_cache(maxsize=1)

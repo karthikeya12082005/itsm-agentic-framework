@@ -71,6 +71,25 @@ class RootLocalisation(unittest.TestCase):
         bad_release = {"web": self.h(["errors"]), "orders-api": self.h(["errors", "config", "db_pool"]),
                        "cache": ok, "worker": ok}
         self.assertEqual(evidence.locate_root(bad_release), "orders-api")
+        # 6.1: a gateway fault is its own root; a web fault seen through the gateway stays a web fault
+        tunnel = {"web": ok, "orders-api": ok, "cache": ok, "worker": ok, "vpn-gateway": self.h(["errors", "tunnel"])}
+        self.assertEqual(evidence.locate_root(tunnel), "vpn-gateway")
+        through = {"web": self.h(["errors", "certificate"]), "orders-api": ok, "cache": ok, "worker": ok,
+                   "vpn-gateway": self.h(["errors"])}
+        self.assertEqual(evidence.locate_root(through), "web")
+
+
+class FreeTextTriage(unittest.TestCase):                                     # 6.1: portal problem reports
+    def test_vpn_words_map_to_the_gateway(self):
+        for text in ("I can't connect to the VPN from home", "Remote access keeps failing since this morning"):
+            self.assertEqual(IA.keyword_service(text), "vpn-gateway")
+        self.assertEqual(IA.keyword_service("The shop website shows an error"), "web")
+        self.assertEqual(IA.keyword_service("my laptop fan is loud"), "")
+
+    def test_vpn_network_incidents_use_the_vpn_prior(self):
+        self.assertEqual(bayes.dataset_category("network", "vpn-gateway degraded: tunnel"), "VPN")
+        self.assertEqual(bayes.dataset_category("network", "office switch down"), "NETWORK")
+        self.assertEqual(bayes.dataset_category("database", "vpn"), "DATABASE")
 
 
 class EvidenceFeatures(unittest.TestCase):
@@ -89,9 +108,10 @@ class EvidenceFeatures(unittest.TestCase):
 class FakeLab:
     """Scenario-driven observations; `fixed` flips to healthy after the right action."""
 
-    def __init__(self, root, symptom_health, metrics=None, logs=(), deploys=None, cert_days=90.0, fix_action=None):
+    def __init__(self, root, symptom_health, metrics=None, logs=(), deploys=None, cert_days=90.0, fix_action=None,
+                 vpn=None):
         self.root, self.sym, self.metrics, self.logs = root, symptom_health, metrics or {}, list(logs)
-        self.deploys, self.cert_days, self.fix_action = deploys, cert_days, fix_action
+        self.deploys, self.cert_days, self.fix_action, self.vpn = deploys, cert_days, fix_action, vpn or {}
         self.fixed, self.executed, self.rolled_back = False, [], []
 
     def health(self, svc):
@@ -116,6 +136,8 @@ class FakeLab:
             return {"service": svc, "days_left": self.cert_days if svc == self.root and not self.fixed else 90.0}
         if tool == "check_disk":
             return {"service": svc, "used_pct": self.metrics.get("disk_used_pct", 1.0) if svc == self.root else 1.0}
+        if tool == "check_vpn":
+            return self.vpn if svc == self.root and not self.fixed else {}
         return {}
 
     def execute(self, action, service, ticket, auth):
@@ -139,6 +161,16 @@ SCENARIOS = {
                          metrics={"error_rate": 1.0}, fix_action="RENEW_CERTIFICATE",
                          logs=["ERROR web request failed: RuntimeError: TLS handshake failed: server certificate "
                                "expired 2.0 days ago"]),
+    "vpn_tunnel_down": dict(root="vpn-gateway", symptom_health={"vpn-gateway": ["errors", "tunnel"]},
+                            metrics={"error_rate": 1.0, "tunnel": "down"}, fix_action="RESTART_NETWORK_DEVICE",
+                            vpn={"tunnel": "down", "dns_lookup": {"answer": "10.20.0.15", "zone_record": "10.20.0.15"},
+                                 "vpn_profile_days_left": 300.0},
+                            logs=["ERROR vpn-gateway IPsec tunnel dc-1 down: IKE SA deleted, child SA rekey failed"]),
+    "dns_failure": dict(root="vpn-gateway", symptom_health={"vpn-gateway": ["errors", "dns"]},
+                        metrics={"error_rate": 1.0, "dns_ok": False}, fix_action="UPDATE_DNS_RECORD",
+                        vpn={"tunnel": "up", "dns_lookup": {"answer": "NXDOMAIN", "zone_record": "10.20.0.15"},
+                             "vpn_profile_days_left": 300.0},
+                        logs=["ERROR vpn-gateway request failed: DNS resolution failed for shop.intranet.lab: NXDOMAIN"]),
 }
 
 
@@ -155,15 +187,15 @@ class IncidentFlow(unittest.TestCase):
         self.saver = cp.memory_saver()
         self.graph = build_graph(None, checkpointer=self.saver)
 
-    def run_incident(self, lab, category="internal_applications"):
+    def run_incident(self, lab, category="internal_applications", affected="web"):
         for p in (mock.patch.object(tools, "run", side_effect=lab.run),
                   mock.patch.object(tools, "check_health", side_effect=lab.health),
                   mock.patch.object(IA.lab_actions, "execute", side_effect=lab.execute),
                   mock.patch.object(IA.lab_actions, "rollback", side_effect=lab.rollback)):
             p.start()
             self.addCleanup(p.stop)
-        n = self.src.create_incident("[lab-monitor] web degraded", f"Affected service: web\nSymptoms: {lab.sym}",
-                                     category)
+        n = self.src.create_incident(f"[lab-monitor] {affected} degraded",
+                                     f"Affected service: {affected}\nSymptoms: {lab.sym}", category)
         return n, process_ticket(self.src, self.graph, n)
 
     def values(self, n):
@@ -183,6 +215,48 @@ class IncidentFlow(unittest.TestCase):
         for a in ("Triage Agent", "RCA Agent", "Policy & Risk Agent", "Critic Agent", "Execution Agent",
                   "Verification Agent", "Communication Agent"):
             self.assertIn(a, agents_seen)
+
+    def test_monitoring_tunnel_outage_is_not_eligible_under_pol_0004(self):   # 6.1: the rule engine decides
+        lab = FakeLab(**SCENARIOS["vpn_tunnel_down"])
+        n, final = self.run_incident(lab, category="network", affected="vpn-gateway")
+        v = self.values(n)
+        self.assertEqual(v["incident"]["dataset_category"], "VPN")
+        self.assertEqual(v["incident"]["rca"]["ranking"][0][0], "NETWORK_FAILURE")
+        self.assertEqual((v["policy"]["decision"], v["policy"]["policy_id"]), ("DENY", "POL-0004"))
+        self.assertIn("SITE_RELIABILITY_ENGINEER", v["policy"]["reason"])
+        self.assertEqual(final, "ESCALATED")
+        self.assertEqual(lab.executed, [])
+
+    def test_employee_reported_vpn_outage_restarts_the_tunnel(self):        # 6.1 + portal tickets
+        lab = FakeLab(**SCENARIOS["vpn_tunnel_down"])
+        for p in (mock.patch.object(tools, "run", side_effect=lab.run),
+                  mock.patch.object(tools, "check_health", side_effect=lab.health),
+                  mock.patch.object(IA.lab_actions, "execute", side_effect=lab.execute),
+                  mock.patch.object(IA.lab_actions, "rollback", side_effect=lab.rollback)):
+            p.start()
+            self.addCleanup(p.stop)
+        n = self.src.store.create("employee01", "I can't connect to the VPN from home since this morning",
+                                  category="network")
+        final = process_ticket(self.src, self.graph, n)
+        v = self.values(n)
+        self.assertEqual(v["incident"]["affected"], "vpn-gateway")                 # keyword triage (LLM off)
+        self.assertEqual((v["policy"]["decision"], v["policy"]["policy_id"]), ("ALLOW", "POL-0004"))
+        self.assertEqual(final, "RESOLVED")
+        self.assertEqual(lab.executed, [("RESTART_NETWORK_DEVICE", "vpn-gateway")])
+
+    def test_dns_failure_needs_it_service_owner_approval(self):           # 6.1
+        lab = FakeLab(**SCENARIOS["dns_failure"])
+        n, final = self.run_incident(lab, category="network", affected="vpn-gateway")
+        v = self.values(n)
+        self.assertEqual(v["incident"]["rca"]["ranking"][0][0], "DNS_MISCONFIGURATION")
+        self.assertEqual((v["policy"]["decision"], v["policy"]["approver_role"]),
+                         ("ALLOW_WITH_APPROVAL", "IT_SERVICE_OWNER"))
+        self.assertEqual(final, "AWAITING_APPROVAL")
+        self.assertEqual(lab.executed, [])                                  # nothing before the approval
+        ok, _ = approve_ticket(self.src, self.graph, n, "serviceowner01", True)
+        self.assertTrue(ok)
+        self.assertEqual(self.src.get(n)["state"], "RESOLVED")
+        self.assertEqual(lab.executed, [("UPDATE_DNS_RECORD", "vpn-gateway")])
 
     def test_certificate_needs_it_service_owner_approval(self):
         lab = FakeLab(**SCENARIOS["cert_expired"])
