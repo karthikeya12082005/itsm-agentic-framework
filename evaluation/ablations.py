@@ -34,6 +34,15 @@ VARIANTS = ("rules", "rules-noret", "multi", "multi-noret", "single")
 DEFAULT_SINGLE = "groq:openai/gpt-oss-20b"
 
 
+def variant_key(variant: str, single: str) -> str:
+    """Result key / file name: the single-LLM variant carries its model, so runs with different models coexist."""
+    return f"single({single.split(':', 1)[1]})" if variant == "single" else variant
+
+
+def _fname(key: str) -> str:
+    return key.replace("/", "_").replace(":", "_").replace("(", "_").replace(")", "")
+
+
 def variant_mode(variant: str, single: str) -> tuple[str, bool]:
     """(mode for the evaluation runners, use retrieval)."""
     base, noret = variant.removesuffix("-noret"), variant.endswith("-noret")
@@ -68,14 +77,15 @@ def part_access(variants, single, pace, limit, retriever) -> dict:
         rows = EA.run_mode(mode, _requests(limit), retriever if use_ret else None, pace)
         recs = log_records(start)
         s = EA.summarise(rows)
-        s.update(variant=v, mode=mode, retrieval=use_ret, wall_min=round((time.time() - t0) / 60, 1),
+        key = variant_key(v, single)
+        s.update(variant=key, mode=mode, retrieval=use_ret, wall_min=round((time.time() - t0) / 60, 1),
                  llm=llm_usage(recs), latency=provider_latency(recs))
-        print(f"{v}: decision {s['decision_exact_match']} final {s['first_final_state_match']} automation "
+        print(f"{key}: decision {s['decision_exact_match']} final {s['first_final_state_match']} automation "
               f"{s['automation_rate']} escalation {s['escalation_rate']} mean {s['mean_processing_s']} s "
               f"LLM answered {s['llm']['_answered_share']}")
-        out[v] = s
+        out[key] = s
         if limit is None:
-            EA.write_csv(RESULTS_DIR / f"ablation_access_{v}.csv", rows)
+            EA.write_csv(RESULTS_DIR / f"ablation_access_{_fname(key)}.csv", rows)
     return out
 
 
@@ -90,14 +100,15 @@ def part_incident(variants, single, pace, reps, retriever) -> dict:
         rows, summ = EI.eval_lab([mode], reps, retriever if use_ret else None, pace)
         recs = log_records(start)
         s = dict(summ[mode])
-        s.update(variant=v, mode=mode, retrieval=use_ret, wall_min=round((time.time() - t0) / 60, 1),
+        key = variant_key(v, single)
+        s.update(variant=key, mode=mode, retrieval=use_ret, wall_min=round((time.time() - t0) / 60, 1),
                  llm=llm_usage(recs), latency=provider_latency(recs))
-        print(f"{v}: top1 {s['rca_top1']} top3 {s['rca_top3']} resolved {s['resolution_rate']} MTTR "
+        print(f"{key}: top1 {s['rca_top1']} top3 {s['rca_top3']} resolved {s['resolution_rate']} MTTR "
               f"{s['mttr_s_mean']} s LLM answered {s['llm']['_answered_share']}")
-        out[v] = s
+        out[key] = s
         for r in rows:
-            r["variant"] = v
-        EI.write_csv(RESULTS_DIR / f"ablation_incident_{v}.csv", rows)
+            r["variant"] = key
+        EI.write_csv(RESULTS_DIR / f"ablation_incident_{_fname(key)}.csv", rows)
     return out
 
 
@@ -187,7 +198,8 @@ def _variant_table(sec: dict, keys: list[tuple[str, str]]) -> list[str]:
 def write_markdown(s: dict) -> None:
     L = ["# Final ablations (TODO 5.1)", "", f"Generated {s.get('generated', '?')} by `python -m evaluation.ablations`.",
          "", "Variants: **rules** = LLM off (rule-based path of every agent); **multi** = per-agent models from .env; "
-         f"**single** = one model for every agent ({s.get('single', DEFAULT_SINGLE)}); **-noret** = no hybrid "
+         "**single(model)** = that one model for every agent (no secondary model: a rate-limited call falls back "
+         "to rules); **-noret** = no hybrid "
          "retrieval. The policy decision is rule-based in every variant (design rule).", ""]
     if s.get("access"):
         L += ["## A. Access requests (52 labelled catalogue requests, full graph, simulated endpoint)", ""]
@@ -218,7 +230,7 @@ def write_markdown(s: dict) -> None:
         for k, label in (("raw", "raw text"), ("llm", "LLM rewrite"), ("raw_on_rewritten_subset", "raw (rewritten subset)"),
                          ("llm_on_rewritten_subset", "LLM (rewritten subset)")):
             a = rw.get(k)
-            if a:
+            if a and (k in ("raw", "llm") or rw["rewritten_by_llm"] < rw["requests"]):
                 L.append(f"| {label} | {a['sop_hit1']} | {a['sop_hit3']} | {a['sop_mrr10']} | {a['policy_hit1']} | "
                          f"{a['policy_hit3']} | {a['policy_mrr10']} |")
         L.append("")
@@ -283,7 +295,6 @@ def main():
             print(json.dumps({k: (v["latency_median_s"], v["answered"], v["called"])
                               for k, v in s["latency"]["per_model"].items()}))
     if save:
-        s["single"] = args.single
         s["generated"] = datetime.now().isoformat(timespec="seconds")
         SUMMARY.write_text(json.dumps(s, indent=1), encoding="utf-8")
         write_markdown(s)

@@ -297,3 +297,47 @@ show employee01 Chrome (restart Chrome), `cli list`, audit log; finally stop ser
     0.633; k-NN majority alone top-1 0.325, LLM alone 0.255; LLM calibration on 30 train incidents 0.267 ->
     alpha 0.267. The synthetic dataset's root-cause labels are only weakly tied to the ticket text, so absolute
     numbers are low; the ranking still improves on the prior at every step.
+
+## 14. Phase 5 — final evaluation, dashboard, demos, README, clean run-through (Nov 25 2026, branch phase-5-final)
+- 5.1 ablations (`evaluation/ablations.py`, results evaluation/results/ablations_summary.{json,md} + ablation_*.csv):
+  variants rules / rules-noret / multi / multi-noret / single(model), parts access (52 labelled requests), incident
+  (8 injected faults), rewrite (Retrieval Agent raw text vs LLM rewrite, 48 requests with a catalogue target) and
+  latency (every attempt in logs/llm_calls.jsonl). Every run records how many LLM calls a model ANSWERED (read from
+  the call log between start and end of the run) - without that share a comparison on free tiers is meaningless.
+  * Access: decisions identical in all variants (0.981, the same intended R51 critic escalation); multi-LLM adds one
+    critic escalation (automation 0.827 vs 0.846) and costs ~4 s per ticket vs 0.4 s.
+  * Incident: rules / multi, with or without retrieval: all 8 faults resolved, top-1 1.0. single(gpt-oss-20b):
+    top-1 0.875, resolved 0.875 - memory_leak: the small model's hypothesis pulled the posterior to 0.458 < the 0.5
+    gate -> ESCALATED (the gate did its job; no wrong action).
+  * Rewrite: LLM query rewrite improves SOP Hit@1 0.438 -> 0.604, MRR 0.651 -> 0.764, policy Hit@1 0.312 -> 0.417
+    (policy Hit@3 0.896 -> 0.854): free-text employee requests need rewriting into ticket style.
+  * Latency (median per answered attempt): groq qwen3.8-27b 0.77 s, gpt-oss-20b 0.92 s, gpt-oss-120b 0.99 s,
+    gemini 3.5-flash-lite 1.46 s, gemini 3.5-flash 2.01 s, ollama llama3.2:3b 4.14 s; success of called attempts
+    qwen 0.997, 20b 0.984, 120b 0.852, flash-lite 0.896, flash 0.479 (429 quota).
+  * Problem: single(gpt-oss-20b) on the access part got only 20.5 % of its calls answered - after ~480 calls that
+    day Groq answered 429 with Retry-After 260 s / 437 s, and the single variant has no secondary. Result kept but
+    labelled; single variant re-run with qwen/qwen3.8-27b; results are now keyed by model.
+  * single(qwen3.8-27b), 81 % / 38 % of calls answered (access / incident): access decision 0.962, final state
+    0.981 - R41/R42 "remove pypi.org / gemini" read as "nothing requested" -> ESCALATE_FOR_REVIEW instead of the
+    target's policy; same outcome (escalated, nothing executed); multi's gpt-oss-20b read R42 the same way.
+    Incident: 8/8 resolved, top-1 1.0, MTTR 21.4 s.
+  * Retrieval cost: mean processing per access ticket rules 0.42 s vs rules-noret 0.10 s (Neon + embedding), multi
+    4.37 s vs multi-noret 1.93 s (the no-retrieval variant also skips the LLM query rewrite).
+- 5.2 dashboard: FastAPI, read-only (approvals stay in the CLI), no new dependency. Found: ServiceNowSource.list()
+  showed only access incidents because ServiceNow's ^OR binds to the previous condition only -> lists what the
+  agents created or own. SQLite connections are thread-bound and FastAPI runs sync routes in a thread pool ->
+  TicketStore opens with check_same_thread=False and the dashboard serialises access with a lock. Screenshots
+  checked with headless Edge (status = dot + icon + label; light/dark tokens from the dataviz reference palette).
+- 5.3 demos: scripts/demo.py (access / incident / reset) runs the real CLI commands and echoes them. Live from the
+  clean clone: INC0010055-59 access (DENY, ALLOW, approval refused for the wrong group then accepted, unknown target
+  escalated, prompt injection -> LLM off -> rules DENY) and INC0010060 incident (CAB approval -> rollback deployment
+  -> verified, 144 s). My expectation label for the injection ticket ("escalated") was wrong - the critic only
+  escalates ALLOW/AWA plans, a DENY stands. The first reset listed Phase-1 audit records without live effect -> the
+  reset now rolls back only live effects (allowlisted domain / installed package), newest first.
+- 5.4 README.md: purpose, architecture (mermaid, render checked), design rules, layout, setup (venv, .env table,
+  knowledge store incl. `prepare`, ServiceNow, LLMs, endpoint), running, demos, dashboard, tests, evaluation,
+  results, limitations. data/raw/data_gen.ipynb was already committed.
+- 5.5 clean run-through from a fresh clone (D:\itsm-clean-test, new venv, README only): pip install 495 s, pip
+  check clean, prepare + ingest (274 s) reproduce the retrieval table exactly, ServiceNow checks OK, 170 tests OK,
+  all agent chains answer, endpoint self-test OK, both demos live, dashboard OK. Lessons: two checkouts share the
+  lab ports (stop one lab first) and keep separate checkpoints; the reset must run where the endpoint service runs.

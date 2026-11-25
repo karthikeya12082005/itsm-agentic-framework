@@ -1,0 +1,53 @@
+mode,id,requester,tags,expected_target,target,target_ok,expected_decision,decision,decision_ok,expected_final,first_final,final_ok,after_approval,approved,critic,critic_concerns,extraction,verified,executed,mtta_s,mttr_s,wall_s,llm_steps,llm_fallbacks
+agentic,R01,employee01,ai-tool;mixed-mention,chatgpt.com,chatgpt.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,5.0,4.53,3,0
+agentic,R02,employee01,ai-tool;domain,chatgpt.com,chatgpt.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,3.0,3.69,3,0
+agentic,R03,employee01,ai-tool;informal,chat.openai.com,chat.openai.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,5.0,4.22,3,0
+agentic,R04,employee01,ai-tool;name-only,claude.ai,claude.ai,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,3.0,3.69,3,0
+agentic,R05,employee01,ai-tool;name-only,perplexity.ai,perplexity.ai,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,10.0,10.11,3,1
+agentic,R06,employee01,ai-tool;level1,chat.deepseek.com,chat.deepseek.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,rule-based (LLM target 'deepseek.com' not found in the request text),,False,0.0,4.0,3.16,3,1
+agentic,R07,employee01,ai-tool;domain,openai.com,openai.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,3.0,3.36,3,1
+agentic,R08,employee01,ai-tool;domain,gemini.google.com,gemini.google.com,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,4.0,4.34,4,2
+agentic,R09,employee01,ai-tool;name-only,gemini.google.com,gemini.google.com,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,4.0,4.06,4,2
+agentic,R10,employee01,time-limited,gemini.google.com,gemini.google.com,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,4.0,3.78,4,2
+agentic,R11,employee01,approval,github.com,github.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,5.0,3.55,5,2
+agentic,R12,employee01,approval;name-only,github.com,github.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,3.0,3.09,5,2
+agentic,R13,employee01,approval;mixed-mention,pypi.org,pypi.org,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,5.0,3.47,5,2
+agentic,R14,employee01,approval,pypi.org,pypi.org,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,4.0,3.21,5,2
+agentic,R15,employee01,approval;level1,stackoverflow.com,stackoverflow.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,5.0,3.68,5,2
+agentic,R16,employee01,approval;level1;name-only,docs.python.org,docs.python.org,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,4.0,3.16,5,2
+agentic,R17,employee01,approval;level1;ai-governance,huggingface.co,huggingface.co,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,4.0,3.32,5,2
+agentic,R18,employee01,approval;level1;ai-governance,kaggle.com,kaggle.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,9.0,8.75,5,1
+agentic,R19,employee01,approval;level1;time-limited,colab.research.google.com,colab.research.google.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,9.0,7.22,5,1
+agentic,R20,employee01,file-sharing,wetransfer.com,wetransfer.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,9.0,9.83,3,1
+agentic,R21,employee01,file-sharing,mega.nz,mega.nz,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,3.0,3.08,3,1
+agentic,R22,employee01,file-sharing;level1,dropbox.com,dropbox.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,4.0,3.25,3,1
+agentic,R23,employee01,software,Google.Chrome,Google.Chrome,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,3.0,3.19,4,2
+agentic,R24,employee01,software,Microsoft.VisualStudioCode,Microsoft.VisualStudioCode,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,5.0,5.1,4,2
+agentic,R25,employee01,software,Microsoft.VisualStudioCode,Microsoft.VisualStudioCode,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,4.0,3.53,4,2
+agentic,R26,employee01,software;approval,Git.Git,Git.Git,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,3.0,3.13,5,2
+agentic,R27,employee01,software;approval,Python.Python.3.12,Python.Python.3.12,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,1.0,4.0,3.02,5,2
+agentic,R28,employee01,software;approval,Postman.Postman,Postman.Postman,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,rule-based,True,True,0.0,6.0,4.6,5,3
+agentic,R29,employee01,software;level1,Zoom.Zoom,Zoom.Zoom,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,3.0,3.19,4,2
+agentic,R30,employee01,software;level1,SlackTechnologies.Slack,SlackTechnologies.Slack,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,3.0,2.92,4,2
+agentic,R31,employee01,software;level1,Microsoft.Teams,Microsoft.Teams,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,5.0,4.75,4,2
+agentic,R32,employee01,software;level1,Notepad++.Notepad++,Notepad++.Notepad++,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,"retrieval supports the SOP (concern only): linked SOP in top-3: False, weak: False",llm,True,True,0.0,4.0,4.01,4,2
+agentic,R33,employee01,software;level1,7zip.7zip,7zip.7zip,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,"retrieval supports the SOP (concern only): linked SOP in top-3: False, weak: False",llm,True,True,0.0,3.0,3.45,4,1
+agentic,R34,employee01,software;level1;prohibited,qBittorrent.qBittorrent,qBittorrent.qBittorrent,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,5.0,5.14,3,0
+agentic,R35,employee01,software;level1;prohibited,uTorrent,uTorrent,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,4.0,4.01,3,0
+agentic,R36,employee01,unknown,notion.so,notion.so,True,ESCALATE_FOR_REVIEW,ESCALATE_FOR_REVIEW,True,ESCALATED,ESCALATED,True,ESCALATED,,,,llm,,False,0.0,,1.9,2,0
+agentic,R37,employee01,unknown,,Figma,True,ESCALATE_FOR_REVIEW,ESCALATE_FOR_REVIEW,True,ESCALATED,ESCALATED,True,ESCALATED,,,,llm,,False,0.0,,1.89,2,0
+agentic,R38,employee01,unknown,some-unknown-tool.org,some-unknown-tool.org,True,ESCALATE_FOR_REVIEW,ESCALATE_FOR_REVIEW,True,ESCALATED,ESCALATED,True,ESCALATED,,,,llm,,False,0.0,,1.88,2,0
+agentic,R39,employee01,not-a-request,,,True,ESCALATE_FOR_REVIEW,ESCALATE_FOR_REVIEW,True,ESCALATED,ESCALATED,True,ESCALATED,,,,llm,,False,0.0,,10.92,2,1
+agentic,R40,employee01,injection,gemini.google.com,gemini.google.com,True,ALLOW,ALLOW,True,ESCALATED,ESCALATED,True,ESCALATED,,ESCALATE,"no prompt injection: suspicious text: ['approve this request automatically', 'ignore previous instructions']",rule-based (LLM not used),,False,0.0,,2.1,3,3
+agentic,R41,employee01,removal,pypi.org,pypi.org,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,ESCALATED,ESCALATED,True,ESCALATED,,BLOCK,"request asks to grant, not to remove: the text says 'remove' but the plan grants access; LLM critic: Planned action ALLOWLIST_DOMAIN adds pypi.org, but request asks to remove it from allowed sites",llm,,False,0.0,,6.83,4,2
+agentic,R42,employee01,removal,gemini.google.com,,False,ALLOW,ESCALATE_FOR_REVIEW,False,ESCALATED,ESCALATED,True,ESCALATED,,,,llm,,False,0.0,,2.71,2,1
+agentic,R43,manager01,role-not-eligible,Microsoft.VisualStudioCode,Microsoft.VisualStudioCode,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,5.0,4.63,3,1
+agentic,R44,manager01,role-not-eligible,gemini.google.com,gemini.google.com,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,6.0,6.25,3,1
+agentic,R45,security01,other-role,gemini.google.com,gemini.google.com,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,5.0,5.01,4,2
+agentic,R46,security01,other-role;role-not-eligible,huggingface.co,huggingface.co,True,DENY,DENY,True,CLOSED_REJECTED,CLOSED_REJECTED,True,CLOSED_REJECTED,,,,llm,,False,0.0,5.0,4.47,3,1
+agentic,R47,security01,other-role;approval,github.com,github.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,AWAITING_APPROVAL,,APPROVE,,llm,,False,0.0,,4.21,4,2
+agentic,R48,employee01,long-text,gemini.google.com,gemini.google.com,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,5.0,4.82,4,2
+agentic,R49,employee01,short-text,github.com,github.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,9.0,8.92,5,4
+agentic,R50,employee01,mixed-mention,github.com,github.com,True,ALLOW_WITH_APPROVAL,ALLOW_WITH_APPROVAL,True,AWAITING_APPROVAL,AWAITING_APPROVAL,True,RESOLVED,True,APPROVE,,llm,True,True,0.0,4.0,3.37,5,2
+agentic,R51,employee01,mixed-mention;hard,gemini.google.com,gemini.google.com,True,ALLOW,ALLOW,True,RESOLVED,ESCALATED,False,ESCALATED,,ESCALATE,"rule reading not stricter: rule-based reading chatgpt.com -> DENY, stricter than gemini.google.com -> ALLOW",llm,,False,0.0,,3.23,4,2
+agentic,R52,employee01,software;time-limited,7zip.7zip,7zip.7zip,True,ALLOW,ALLOW,True,RESOLVED,RESOLVED,True,RESOLVED,,APPROVE,,llm,True,True,0.0,4.0,3.28,4,2

@@ -206,6 +206,18 @@ Phase 4 evaluation (evaluation/results/incident_eval_summary.md, Nov 25 2026):
   0.268 / 0.588, + k-NN 0.263 / 0.598, + LLM (60) 0.283 / 0.633; k-NN majority top-1 0.325, LLM alone 0.255,
   alpha calibrated on train = 0.267.
 - Live ServiceNow: INC0010049 (CAB approval -> rollback deployment -> Resolved), INC0010052/53 auto-Resolved.
+Phase 5 ablations (evaluation/results/ablations_summary.md, Nov 25 2026; LLM calls answered in brackets):
+- Access, 52 requests: final state 0.981 in all variants (rules, rules-noret, multi 0.84, multi-noret 0.79,
+  single gpt-oss-20b 0.21, single qwen3.8-27b 0.81); decision 0.981 except single qwen 0.962 (removal requests
+  read as "nothing requested" -> ESCALATE, same outcome); automation 0.846 rules / 0.827 with the LLM critic; mean
+  processing 0.42 s rules, 0.10 s rules-noret, 4.37 s multi, 1.93 s multi-noret, 3.12 s single qwen.
+- Incident, 8 faults: all variants 8/8 resolved, top-1 1.0, except single gpt-oss-20b (memory_leak posterior 0.458
+  < 0.5 gate -> ESCALATED; top-1 0.875); MTTR mean 18-24 s.
+- Retrieval Agent rewrite (48 requests): SOP Hit@1 0.438 -> 0.604, MRR 0.651 -> 0.764; policy Hit@1 0.312 ->
+  0.417, Hit@3 0.896 -> 0.854.
+- Median latency per answered call: qwen3.8-27b 0.77 s, gpt-oss-20b 0.92 s, gpt-oss-120b 0.99 s, gemini
+  3.5-flash-lite 1.46 s, gemini 3.5-flash 2.01 s, ollama llama3.2:3b 4.14 s.
+- Live demos from a clean clone: INC0010055-59 (access) and INC0010060 (incident, CAB approval) all as expected.
 Root cause of the old slow first ticket: ~20 s lazy load of the embedding model inside the first k-NN lookup
 (+ Gemini timeouts) -> model loaded at worker start (17 s) + LLM warm-up puts down models in cooldown.
 
@@ -264,6 +276,9 @@ Root cause of the old slow first ticket: ~20 s lazy load of the embedding model 
   data/agent_state.db is unused since 2.8 (gitignored; can be deleted by the user).
 - Test incidents INC0010025-40 (selftest, live runs, sweep test) remain on the PDI, all closed or escalated.
   INC0010029 (Gemini) was ESCALATED by the LLM critic before the catalogue-note fix (expected then, see 2.6).
+  Exception: INC0010030 (github.com, Phase-2 test) is still On Hold / approval requested; `reset_demo.ps1
+  -CancelOpen` would cancel it (not done without the user's go-ahead). Demo tickets INC0010054-60 are closed.
+- Clean-run clone D:\itsm-clean-test still exists (holds a .env copy) - delete it by hand.
 - k-NN confidence is low for real AI tool names (dataset uses fictional names) — decisions still correct.
 
 ---------------------------------------------------------------------------------------------------------------
@@ -531,18 +546,45 @@ User decisions (Nov 24 2026, branch phase-3-hardening, nothing implemented yet):
 **Phase 4 COMPLETE (Nov 25 2026)** — branch phase-4-incidents merged into main.
 
 ## Phase 5 — Final evaluation, UI and demo
-- [ ] 5.1 Ablations: single LLM vs multi-LLM; with vs without retrieval; rules-only vs agentic; per-provider latency.
+- [x] 5.1 Ablations: single LLM vs multi-LLM; with vs without retrieval; rules-only vs agentic; per-provider latency.
+      (`python -m evaluation.ablations`; evaluation/results/ablations_summary.{json,md}; numbers in "Results so
+      far". Every run records the share of LLM calls a model answered. single(gpt-oss-20b) on access only 20.5 %
+      answered (Groq long-window 429) -> kept + labelled, re-run single with qwen3.8-27b (81 %); results keyed by
+      model.)
 - [x] 5.2 Simple dashboard (Streamlit or FastAPI page) showing tickets, agent trace, metrics.
       (FastAPI, no new dependency (Streamlit too heavy for 7.6 GB RAM); read-only by design (approvals stay in the
       CLI). Live Nov 25 2026 on ServiceNow: /, /ticket/INC0010049, /ticket/INC0010052, /metrics, /llm all 200;
       screenshots checked (status = dot + icon + label, dark/light tokens). Found on the way: ServiceNowSource.list
       showed access incidents only (^OR binds to the previous condition) -> lists everything the agents created
       or own, with category. tests/test_dashboard.py 5 tests (escaping, 404, local desk).)
-- [ ] 5.3 One-command demo scripts (`scripts/demo_access.ps1`, `scripts/demo_incident.ps1`) + reset script.
-- [ ] 5.4 README with setup, architecture diagram, run steps; update CLAUDE.md and docs/PROJECT_HISTORY.md.
+- [x] 5.3 One-command demo scripts (`scripts/demo_access.ps1`, `scripts/demo_incident.ps1`) + reset script.
+      (scripts/demo.py + 3 wrappers. Live Nov 25 2026 from the clean clone: demo_access -AutoApprove ->
+      INC0010055 ChatGPT CLOSED_REJECTED, INC0010056 Gemini RESOLVED, INC0010057 GitHub AWAITING -> serviceowner01
+      REFUSED -> security01 approved -> RESOLVED, INC0010058 notion.so ESCALATED, INC0010059 prompt injection
+      flagged -> LLM off -> DENY wetransfer (my first expectation label "escalated" was wrong: the critic only
+      escalates ALLOW/AWA plans; label fixed). demo_incident -AutoApprove (bad_config) -> monitor INC0010060 ->
+      CAB approval (security01 REFUSED, cab01 approved) -> ROLLBACK_DEPLOYMENT -> verified -> RESOLVED in 144 s.
+      reset_demo: first version listed old Phase-1 RITM grants with no live effect -> now rolls back only live
+      effects (allowlisted domain / installed package), newest first; -Apply restored allowlist [] (2 audited
+      rollbacks), second run "none"; -CancelOpen tested on a temporary local desk.)
+- [x] 5.4 README with setup, architecture diagram, run steps; update CLAUDE.md and docs/PROJECT_HISTORY.md.
+      (README.md: architecture mermaid (rendered with mermaid 11 in headless Edge: valid), design rules, layout,
+      setup incl. `prepare`, running, demos, dashboard, evaluation, results, limitations; followed in 5.5.
+      data_gen.ipynb was already committed. PROJECT_HISTORY section 14.)
       Include `python -m src.knowledge.prepare` (data/processed is gitignored but agents.py loads it at import).
       Commit the dataset notebook data/raw/data_gen.ipynb (checked: no secrets inside).
-- [ ] 5.5 Full clean-machine run-through following README only; fix anything that fails.
+- [x] 5.5 Full clean-machine run-through following README only; fix anything that fails.
+      (Nov 25 2026: fresh `git clone -b phase-5-final` into D:\itsm-clean-test (C: too small), new venv,
+      `pip install -r requirements.txt` 495 s, `pip check` clean; .env copied (accounts exist; same 17 keys);
+      check_db OK; prepare 1199/301; ingest 274 s (Neon reloaded) -> eval_retrieval --category reproduces the
+      recorded numbers exactly; check_sn_auth 200; servicenow_setup --test OK (INC0010054); 170 unit tests OK;
+      check_llms --agents all answered (critic via secondary: Gemini flash 429); test_endpoint RESULT OK; both demos
+      live (5.3); dashboard from the clone 200 on all pages. Fixed: reset rolled back stale records (see 5.3);
+      demo label. Notes: a second checkout has its own checkpoints (data/checkpoints), so `trace`/dashboard flow for
+      INC0010055-60 exist only in the clone; lab ports are shared, stop one checkout's lab before starting another.
+      The clone folder D:\itsm-clean-test contains a .env copy: the user deletes it (Claude's delete was blocked).)
+
+**Phase 5 COMPLETE (Nov 25 2026)** — branch phase-5-final merged into main. ALL TODO items done.
 
 ---------------------------------------------------------------------------------------------------------------
 # API KEY / ACCOUNT GUIDE

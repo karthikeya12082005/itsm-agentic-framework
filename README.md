@@ -192,7 +192,10 @@ powershell -ExecutionPolicy Bypass -File scripts\reset_demo.ps1                 
 powershell -ExecutionPolicy Bypass -File scripts\reset_demo.ps1 -Apply -CancelOpen  # undo grants, cancel open tickets
 ```
 Add `-Local` to use the offline SQLite desk instead of ServiceNow and `-RulesOnly` to run without LLMs. Without
-`-AutoApprove`, the demo prints the `approve` command for you to run.
+`-AutoApprove`, the demo prints the `approve` command for you to run. The reset rolls back only grants that are
+still live on the endpoint (domain still allowlisted, package still installed), newest first, through the
+enforcement service. It reads the service's audit log, so run it from the same checkout as the endpoint service.
+Only one checkout's lab can run at a time, because the lab services use fixed ports 9101-9104.
 
 ### Access requests by hand
 ```powershell
@@ -269,8 +272,30 @@ On 194 held-out dataset incidents, top-1 / top-3 root-cause accuracy from creati
 with the prior alone and 0.268 / 0.588 with naive Bayes. Adding the LLM hypothesis gives 0.283 / 0.633
 (measured on 60 incidents).
 
-The ablations (single vs multi-LLM, with vs without retrieval, rules vs agentic, per-provider latency) are in
-`evaluation/results/ablations_summary.md`.
+**Ablations** (`evaluation/results/ablations_summary.md`):
+- **Rules vs agentic, single vs multi-LLM:** policy decisions and final states are the same in every variant,
+  because the rule engine decides.
+  - Access: final-state match 0.981 in every variant; decision match 0.962 with single qwen.
+  - Incidents: all 8 faults resolved with rules, multi-LLM, and single qwen3.8-27b.
+  - With single gpt-oss-20b, one fault (memory leak) was escalated: the small model's hypothesis lowered the
+    posterior to 0.458, below the 0.5 confidence gate, so the system escalated instead of acting.
+- **What the LLMs add:**
+  - Grounded extraction of free text.
+  - A stricter critic: one more access request is escalated (automation 0.827 vs 0.846).
+  - Better retrieval queries: the query rewrite raises SOP Hit@1 from 0.438 to 0.604 and policy Hit@1 from 0.312
+    to 0.417 on free-text requests.
+  - Readable messages to the user.
+- **Cost:** about 3–4 s per access ticket, compared with 0.4 s for rules only.
+- **Median latency per answered call:**
+
+  | Model | Median latency | Called attempts answered |
+  |---|---|---|
+  | Groq qwen3.8-27b | 0.77 s | 0.997 |
+  | Groq gpt-oss-20b | 0.92 s | 0.984 |
+  | Groq gpt-oss-120b | 0.99 s | 0.852 |
+  | Gemini 3.5-flash-lite | 1.46 s | 0.896 |
+  | Gemini 3.5-flash | 2.01 s | 0.479 (free-tier quota) |
+  | Ollama llama3.2:3b (local) | 4.14 s | - |
 
 ## Known limitations
 - Free-tier LLMs (Gemini 429/503, Groq tokens per minute) often fall back to the secondary model or to rules. The
